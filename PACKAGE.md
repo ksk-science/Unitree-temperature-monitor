@@ -65,7 +65,7 @@ The package requires the Unitree SDK2 Python library to connect to the robot. In
 
 - Runs on port 8081
 - ✅ **All assets included** in `assets/g1/` folder
-- Monitors all 35 motors
+- Monitors all 29 motors
 - Displays surface and winding temperatures
 - Color scale: 30°C (blue) to 120°C (red)
 

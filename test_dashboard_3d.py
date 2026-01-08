@@ -15,7 +15,7 @@ app = Flask(__name__)
 app.config['SECRET_KEY'] = 'unitree-g1-3d-dashboard-test'
 socketio = SocketIO(app, cors_allowed_origins="*")
 
-# Motor ID to name mapping for G1 robot (35 motors total)
+# Motor ID to name mapping for G1 robot (29 motors = 29 DOF)
 MOTOR_NAMES = {
     0: "Left Hip Pitch", 1: "Left Hip Roll", 2: "Left Hip Yaw", 3: "Left Knee",
     4: "Left Ankle Pitch", 5: "Left Ankle Roll", 6: "Right Hip Pitch", 7: "Right Hip Roll",
@@ -24,11 +24,11 @@ MOTOR_NAMES = {
     16: "Left Shoulder Roll", 17: "Left Shoulder Yaw", 18: "Left Elbow", 19: "Left Wrist Roll",
     20: "Left Wrist Pitch", 21: "Left Wrist Yaw", 22: "Right Shoulder Pitch", 23: "Right Shoulder Roll",
     24: "Right Shoulder Yaw", 25: "Right Elbow", 26: "Right Wrist Roll", 27: "Right Wrist Pitch",
-    28: "Right Wrist Yaw", 29: "Left Hand Motor 1", 30: "Left Hand Motor 2", 31: "Left Hand Motor 3",
-    32: "Right Hand Motor 1", 33: "Right Hand Motor 2", 34: "Right Hand Motor 3",
+    28: "Right Wrist Yaw",
 }
 
 # Motor ID to mesh link name mapping
+# Maps each of the 29 motors to their corresponding visual mesh link
 MOTOR_TO_MESH = {
     0: "left_hip_pitch_link", 1: "left_hip_roll_link", 2: "left_hip_yaw_link", 3: "left_knee_link",
     4: "left_ankle_pitch_link", 5: "left_ankle_roll_link", 6: "right_hip_pitch_link", 7: "right_hip_roll_link",
@@ -37,8 +37,7 @@ MOTOR_TO_MESH = {
     16: "left_shoulder_roll_link", 17: "left_shoulder_yaw_link", 18: "left_elbow_link", 19: "left_wrist_roll_link",
     20: "left_wrist_pitch_link", 21: "left_wrist_yaw_link", 22: "right_shoulder_pitch_link", 23: "right_shoulder_roll_link",
     24: "right_shoulder_yaw_link", 25: "right_elbow_link", 26: "right_wrist_roll_link", 27: "right_wrist_pitch_link",
-    28: "right_wrist_yaw_link", 29: "left_hand_palm_link", 30: "left_hand_palm_link", 31: "left_hand_palm_link",
-    32: "right_hand_palm_link", 33: "right_hand_palm_link", 34: "right_hand_palm_link",
+    28: "right_wrist_yaw_link",
 }
 
 motor_data = {'temperatures': [], 'timestamp': 0}
@@ -46,7 +45,7 @@ motor_data = {'temperatures': [], 'timestamp': 0}
 def generate_simulated_data():
     """Generate simulated motor temperature data."""
     temps = []
-    for i in range(35):
+    for i in range(29):  # G1 has 29 motors (29 DOF)
         # Simulate temperatures between 35°C and 115°C
         base_temp = 40 + random.uniform(0, 60)
         temp1 = int(base_temp + random.uniform(-5, 5))

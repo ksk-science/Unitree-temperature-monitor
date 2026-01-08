@@ -61,7 +61,7 @@ Users will need to:
 ## 🎯 What's Included
 
 ✅ Full 3D robot visualization with URDF parsing  
-✅ Real-time temperature monitoring (35 motors)  
+✅ Real-time temperature monitoring (29 motors)  
 ✅ Interactive 3D controls  
 ✅ WebSocket live updates  
 ✅ Test mode with simulated data  

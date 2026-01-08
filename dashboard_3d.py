@@ -12,7 +12,7 @@ app = Flask(__name__)
 app.config['SECRET_KEY'] = 'unitree-g1-3d-dashboard'
 socketio = SocketIO(app, cors_allowed_origins="*")
 
-# Motor ID to name mapping for G1 robot (35 motors total)
+# Motor ID to name mapping for G1 robot (29 motors = 29 DOF)
 MOTOR_NAMES = {
     0: "Left Hip Pitch",
     1: "Left Hip Roll",
@@ -43,16 +43,10 @@ MOTOR_NAMES = {
     26: "Right Wrist Roll",
     27: "Right Wrist Pitch",
     28: "Right Wrist Yaw",
-    # Additional motors (likely hands/grippers)
-    29: "Left Hand Motor 1",
-    30: "Left Hand Motor 2",
-    31: "Left Hand Motor 3",
-    32: "Right Hand Motor 1",
-    33: "Right Hand Motor 2",
-    34: "Right Hand Motor 3",
 }
 
 # Motor ID to mesh link name mapping (based on URDF structure)
+# Maps each of the 29 motors to their corresponding visual mesh link
 MOTOR_TO_MESH = {
     0: "left_hip_pitch_link",
     1: "left_hip_roll_link",
@@ -83,13 +77,6 @@ MOTOR_TO_MESH = {
     26: "right_wrist_roll_link",
     27: "right_wrist_pitch_link",
     28: "right_wrist_yaw_link",
-    # Hand motors - map to hand palm links
-    29: "left_hand_palm_link",
-    30: "left_hand_palm_link",
-    31: "left_hand_palm_link",
-    32: "right_hand_palm_link",
-    33: "right_hand_palm_link",
-    34: "right_hand_palm_link",
 }
 
 # Global variable to store latest motor data
@@ -107,6 +94,11 @@ def low_state_callback(msg: LowState_):
     if hasattr(msg, 'motor_state') and len(msg.motor_state) > 0:
         temps = []
         for i, motor in enumerate(msg.motor_state):
+            # Only process motors 0-28 (29 actual motors with DOF)
+            # Skip motors 29-34 as they don't physically exist (hand palm links have no motors)
+            if i >= 29:
+                continue
+                
             if hasattr(motor, 'temperature') and len(motor.temperature) > 0:
                 # Store both temperature values
                 temps.append({

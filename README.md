@@ -19,7 +19,7 @@ A stunning, interactive 3D visualization dashboard for monitoring Unitree G1 rob
 
 ## 🎬 Demo
 
-The visualization displays all 35 motors of the G1 robot with:
+The visualization displays all 29 motors of the G1 robot with:
 - Surface temperature (external housing)
 - Winding temperature (internal coil - typically hotter)
 - Average temperature with smooth color gradients
@@ -166,12 +166,13 @@ unitree-g1-temperature-monitor/
 
 ### Motor-to-Mesh Mapping
 
-The dashboard maps all 35 motors to their corresponding 3D mesh parts:
+The dashboard maps all 29 motors to their corresponding 3D mesh parts:
 
 - **Legs (0-11)**: Hip, knee, ankle joints
 - **Torso (12-14)**: Waist yaw/roll/pitch
 - **Arms (15-28)**: Shoulder, elbow, wrist joints
-- **Hands (29-34)**: Hand palm links
+
+Note: Hand palm links are structural components without motors/temperature sensors.
 
 ## 🐛 Troubleshooting
 
@@ -212,7 +213,7 @@ The dashboard communicates with the G1 robot over the network. Ensure:
 - Temperature data includes both surface and winding temperatures
 - The 3D model uses the official G1 URDF structure
 - Color gradients are interpolated smoothly for visual appeal
-- All 35 motors are monitored simultaneously
+- All 29 motors are monitored simultaneously
 
 ## 📧 Support
 
