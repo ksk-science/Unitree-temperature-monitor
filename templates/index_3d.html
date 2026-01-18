@@ -180,31 +180,33 @@
             z-index: 100;
             background: rgba(255, 255, 255, 0.1);
             backdrop-filter: blur(10px);
-            border-radius: 15px;
-            padding: 20px;
+            border-radius: 12px;
+            padding: 10px;
             border: 1px solid rgba(255, 255, 255, 0.2);
             box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
-            min-width: 200px;
+            width: 250px;
         }
 
         .controls-panel h2 {
             font-size: 1.1em;
-            margin-bottom: 15px;
+            margin-bottom: 8px;
             font-weight: 600;
         }
 
         .control-btn {
             width: 100%;
-            padding: 12px;
-            margin-bottom: 10px;
+            padding: 7px 6px;
+            margin-bottom: 5px;
             background: rgba(102, 126, 234, 0.3);
             border: 1px solid rgba(102, 126, 234, 0.5);
-            border-radius: 8px;
+            border-radius: 6px;
             color: white;
             font-size: 0.9em;
             cursor: pointer;
             transition: all 0.3s ease;
             font-weight: 500;
+            white-space: nowrap;
+            line-height: 1.2;
         }
 
         .control-btn:hover {
@@ -245,6 +247,30 @@
             margin-bottom: 12px;
             font-weight: 600;
             color: #667eea;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .close-btn {
+            background: rgba(239, 68, 68, 0.3);
+            border: 1px solid rgba(239, 68, 68, 0.5);
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            color: white;
+            font-size: 16px;
+            line-height: 1;
+            transition: all 0.3s ease;
+        }
+
+        .close-btn:hover {
+            background: rgba(239, 68, 68, 0.6);
+            transform: scale(1.1);
         }
 
         .motor-detail {
@@ -378,7 +404,8 @@
     <!-- Controls Panel -->
     <div class="controls-panel">
         <h2>🎮 Controls</h2>
-        <button class="control-btn active" id="autoRotateBtn">Auto Rotate: ON</button>
+        <button class="control-btn" id="autoRotateBtn">Auto Rotate: OFF</button>
+        <button class="control-btn active" id="showPositionsBtn">Show Positions: ON</button>
         <button class="control-btn" id="resetViewBtn">Reset Camera</button>
         <button class="control-btn" id="wireframeBtn">Wireframe: OFF</button>
     </div>
@@ -396,7 +423,10 @@
 
     <!-- Motor Info Panel -->
     <div class="motor-info-panel" id="motorInfoPanel">
-        <h3 id="motorInfoTitle">Motor Information</h3>
+        <h3 id="motorInfoTitle">
+            <span>Motor Information</span>
+            <button class="close-btn" id="closePanelBtn" title="Close">×</button>
+        </h3>
         <div id="motorInfoContent"></div>
     </div>
 
@@ -405,9 +435,14 @@
         let scene, camera, renderer, controls;
         let robotRoot; // Root object for the robot
         let linkMeshes = {}; // Map of link names to meshes
+        let linkObjects = {}; // Map of link names to Three.js Group objects (for positioning)
+        let jointData = {}; // Map of joint names to joint information
+        let motorToJoint = {}; // Map of motor IDs to joint names
         let motorData = {};
-        let autoRotate = true;
+        let selectedMesh = null; // Currently selected mesh
+        let autoRotate = false;
         let wireframeMode = false;
+        let showPositions = true; // Enable position updates by default
         const socket = io();
 
         // Temperature color mapping
@@ -506,13 +541,24 @@
                     }
                 }
 
+                // Get joint axis for revolute joints
+                let axis = [0, 0, 1]; // default axis
+                const axisElement = joint.getElementsByTagName('axis')[0];
+                if (axisElement) {
+                    const axisStr = axisElement.getAttribute('xyz');
+                    if (axisStr) {
+                        axis = axisStr.split(' ').map(parseFloat);
+                    }
+                }
+
                 joints[name] = {
                     name: name,
                     type: type,
                     parent: parent,
                     child: child,
                     xyz: xyz,
-                    rpy: rpy
+                    rpy: rpy,
+                    axis: axis
                 };
             }
 
@@ -531,7 +577,8 @@
                 0.1,
                 1000
             );
-            camera.position.set(3, 1.5, 3);
+            // Position camera closer and facing the front of the robot
+            camera.position.set(0, 1.2, 2.5);
             camera.lookAt(0, 0.5, 0);
 
             renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -635,8 +682,6 @@
             document.getElementById('loadingProgress').textContent = 'Assembling robot...';
 
             // Build kinematic tree
-            const linkObjects = {};
-
             // Create Three.js objects for each link
             for (const linkName in meshCache) {
                 const linkObj = new THREE.Group();
@@ -651,27 +696,118 @@
                 robotRoot.add(linkObjects[rootLinkName]);
             }
 
-            // Attach children according to joints
+            // Attach children according to joints and store joint info
             for (const jointName in joints) {
                 const joint = joints[jointName];
                 const parentObj = linkObjects[joint.parent];
                 const childObj = linkObjects[joint.child];
 
                 if (parentObj && childObj) {
-                    // Apply joint transform
-                    childObj.position.set(joint.xyz[0], joint.xyz[1], joint.xyz[2]);
-                    childObj.rotation.set(joint.rpy[0], joint.rpy[1], joint.rpy[2]);
-
-                    parentObj.add(childObj);
+                    // Create a joint pivot group for rotation
+                    const jointPivot = new THREE.Group();
+                    jointPivot.name = `${jointName}_pivot`;
+                    jointPivot.position.set(joint.xyz[0], joint.xyz[1], joint.xyz[2]);
+                    jointPivot.rotation.set(joint.rpy[0], joint.rpy[1], joint.rpy[2]);
+                    
+                    // Store original transform for reference
+                    jointPivot.userData.originalPosition = new THREE.Vector3(joint.xyz[0], joint.xyz[1], joint.xyz[2]);
+                    jointPivot.userData.originalRotation = new THREE.Euler(joint.rpy[0], joint.rpy[1], joint.rpy[2]);
+                    jointPivot.userData.axis = new THREE.Vector3(joint.axis[0], joint.axis[1], joint.axis[2]);
+                    jointPivot.userData.jointType = joint.type;
+                    jointPivot.userData.childLink = joint.child;
+                    
+                    // Store joint data
+                    jointData[jointName] = {
+                        pivot: jointPivot,
+                        axis: joint.axis,
+                        type: joint.type,
+                        childLink: joint.child
+                    };
+                    
+                    // Attach pivot to parent
+                    parentObj.add(jointPivot);
+                    
+                    // Reset child transform and attach to pivot
+                    childObj.position.set(0, 0, 0);
+                    childObj.rotation.set(0, 0, 0);
+                    jointPivot.add(childObj);
                 }
             }
 
-            // Position robot at ground level and rotate to stand upright
+            // Create motor to joint mapping based on link names
+            // This maps motor IDs to the joint that controls that link
+            await fetch('/api/motor_mapping')
+                .then(r => r.json())
+                .then(mapping => {
+                    const motorToMesh = mapping.motor_to_mesh;
+                    
+                    // For each motor, find the joint that has this link as a child
+                    for (const motorId in motorToMesh) {
+                        const linkName = motorToMesh[motorId];
+                        
+                        // Find the joint that controls this link
+                        for (const jointName in jointData) {
+                            if (jointData[jointName].childLink === linkName) {
+                                motorToJoint[motorId] = jointName;
+                                console.log(`Motor ${motorId} -> Joint ${jointName} -> Link ${linkName}`);
+                                break;
+                            }
+                        }
+                    }
+                });
+
+            // Position robot at ground level and rotate to stand upright facing forward
             robotRoot.position.y = 0.7; // Approximate height adjustment
             robotRoot.rotation.x = -Math.PI / 2; // Rotate -90 degrees to stand upright
+            robotRoot.rotation.z = -Math.PI / 2; // Rotate -90 degrees to face forward (camera)
 
             document.getElementById('loadingScreen').classList.add('hidden');
             console.log(`Loaded ${Object.keys(linkMeshes).length} link meshes`);
+            console.log(`Created ${Object.keys(jointData).length} joints`);
+        }
+
+        // Update motor positions
+        function updateMotorPositions(positions) {
+            if (!positions || positions.length === 0) return;
+            if (!showPositions) return; // Skip if positions are disabled
+
+            positions.forEach(posData => {
+                const motorId = posData.motor_id;
+                const position = posData.position;
+                const jointName = motorToJoint[motorId];
+
+                if (jointName && jointData[jointName]) {
+                    const joint = jointData[jointName];
+                    const pivot = joint.pivot;
+                    const axis = joint.axis;
+
+                    // Apply rotation around the joint axis
+                    // The position value is in radians
+                    if (joint.type === 'revolute' || joint.type === 'continuous') {
+                        // Create rotation quaternion around the axis
+                        const rotationAxis = new THREE.Vector3(axis[0], axis[1], axis[2]).normalize();
+                        const quaternion = new THREE.Quaternion();
+                        quaternion.setFromAxisAngle(rotationAxis, position);
+
+                        // Apply the rotation to the pivot
+                        // First reset to original rotation
+                        pivot.rotation.copy(pivot.userData.originalRotation);
+                        // Then apply the motor position rotation
+                        pivot.quaternion.multiply(quaternion);
+                    }
+                }
+            });
+        }
+
+        // Reset all joints to their original positions
+        function resetAllJointPositions() {
+            for (const jointName in jointData) {
+                const joint = jointData[jointName];
+                const pivot = joint.pivot;
+                if (pivot && pivot.userData.originalRotation) {
+                    pivot.rotation.copy(pivot.userData.originalRotation);
+                }
+            }
         }
 
         // Update motor temperatures
@@ -703,10 +839,15 @@
                     const temp = motor.avg;
                     const color = getTemperatureColor(temp);
 
-                    mesh.material.color = color;
-                    mesh.material.emissive = color;
-                    mesh.material.emissiveIntensity = 0.2 + (temp / 120) * 0.3;
+                    // Update motor data
                     mesh.userData.motorData = motor;
+                    
+                    // Only update colors if this mesh is not currently selected
+                    if (mesh !== selectedMesh) {
+                        mesh.material.color = color;
+                        mesh.material.emissive = color;
+                        mesh.material.emissiveIntensity = 0.2 + (temp / 120) * 0.3;
+                    }
                 }
             });
 
@@ -716,6 +857,44 @@
         // Handle mesh clicks
         const raycaster = new THREE.Raycaster();
         const mouse = new THREE.Vector2();
+
+        function clearSelection() {
+            if (selectedMesh) {
+                // Restore original material properties based on temperature
+                const motorData = selectedMesh.userData.motorData;
+                if (motorData) {
+                    const temp = motorData.avg;
+                    const color = getTemperatureColor(temp);
+                    selectedMesh.material.color = color;
+                    selectedMesh.material.emissive = color;
+                    selectedMesh.material.emissiveIntensity = 0.2 + (temp / 120) * 0.3;
+                }
+                selectedMesh = null;
+            }
+        }
+
+        function highlightMesh(mesh) {
+            // Clear previous selection
+            clearSelection();
+            
+            // Highlight the new selection
+            selectedMesh = mesh;
+            
+            // Get the temperature-based color and make it lighter/brighter
+            const motorData = mesh.userData.motorData;
+            if (motorData) {
+                const temp = motorData.avg;
+                const baseColor = getTemperatureColor(temp);
+                
+                // Create a lighter version by lerping towards white
+                const lighterColor = baseColor.clone().lerp(new THREE.Color(1.0, 1.0, 1.0), 0.5);
+                
+                // Apply the lighter color with high emissive intensity
+                selectedMesh.material.color = lighterColor;
+                selectedMesh.material.emissive = lighterColor;
+                selectedMesh.material.emissiveIntensity = 0.7;
+            }
+        }
 
         function onMouseClick(event) {
             mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
@@ -727,8 +906,25 @@
             if (intersects.length > 0) {
                 const mesh = intersects[0].object;
                 if (mesh.userData.motorData) {
+                    // Clear hover effect if we had one
+                    if (hoveredMesh && hoveredMesh !== mesh) {
+                        const motorData = hoveredMesh.userData.motorData;
+                        if (motorData) {
+                            const temp = motorData.avg;
+                            const color = getTemperatureColor(temp);
+                            hoveredMesh.material.emissive = color;
+                            hoveredMesh.material.emissiveIntensity = 0.2 + (temp / 120) * 0.3;
+                        }
+                    }
+                    hoveredMesh = null;
+                    
+                    highlightMesh(mesh);
                     showMotorInfo(mesh.userData.motorData);
                 }
+            } else {
+                // Clicked on empty space - clear selection and hide panel
+                clearSelection();
+                document.getElementById('motorInfoPanel').classList.remove('visible');
             }
         }
 
@@ -737,17 +933,57 @@
             const title = document.getElementById('motorInfoTitle');
             const content = document.getElementById('motorInfoContent');
 
-            title.textContent = motor.motor_name;
+            // Update title (keeping the close button)
+            title.querySelector('span').textContent = motor.motor_name;
 
             const temp1Class = motor.temp1 > 60 ? 'temp-hot' : motor.temp1 > 45 ? 'temp-warm' : 'temp-normal';
             const temp2Class = motor.temp2 > 60 ? 'temp-hot' : motor.temp2 > 45 ? 'temp-warm' : 'temp-normal';
             const avgClass = motor.avg > 60 ? 'temp-hot' : motor.avg > 45 ? 'temp-warm' : 'temp-normal';
+
+            // Format position in degrees and radians
+            let positionHTML = '';
+            if (motor.position !== undefined) {
+                const positionDeg = (motor.position * 180 / Math.PI).toFixed(1);
+                const positionRad = motor.position.toFixed(3);
+                positionHTML = `
+                    <div class="motor-detail">
+                        <span class="detail-label">Position</span>
+                        <span class="detail-value">${positionDeg}° (${positionRad} rad)</span>
+                    </div>
+                `;
+            }
+
+            // Format velocity if available
+            let velocityHTML = '';
+            if (motor.velocity !== undefined) {
+                const velocityDeg = (motor.velocity * 180 / Math.PI).toFixed(1);
+                velocityHTML = `
+                    <div class="motor-detail">
+                        <span class="detail-label">Velocity</span>
+                        <span class="detail-value">${velocityDeg}°/s</span>
+                    </div>
+                `;
+            }
+
+            // Format torque if available
+            let torqueHTML = '';
+            if (motor.torque !== undefined) {
+                torqueHTML = `
+                    <div class="motor-detail">
+                        <span class="detail-label">Torque</span>
+                        <span class="detail-value">${motor.torque.toFixed(2)} Nm</span>
+                    </div>
+                `;
+            }
 
             content.innerHTML = `
                 <div class="motor-detail">
                     <span class="detail-label">Motor ID</span>
                     <span class="detail-value">${motor.motor_id}</span>
                 </div>
+                ${positionHTML}
+                ${velocityHTML}
+                ${torqueHTML}
                 <div class="motor-detail">
                     <span class="detail-label">Surface Temp</span>
                     <span class="detail-value ${temp1Class}">${motor.temp1}°C</span>
@@ -771,6 +1007,84 @@
 
         window.addEventListener('click', onMouseClick, false);
 
+        // Close panel button
+        document.getElementById('closePanelBtn').addEventListener('click', function(event) {
+            event.stopPropagation(); // Prevent triggering the window click
+            
+            // Clear hover effect if any
+            if (hoveredMesh) {
+                const motorData = hoveredMesh.userData.motorData;
+                if (motorData) {
+                    const temp = motorData.avg;
+                    const color = getTemperatureColor(temp);
+                    hoveredMesh.material.emissive = color;
+                    hoveredMesh.material.emissiveIntensity = 0.2 + (temp / 120) * 0.3;
+                }
+                hoveredMesh = null;
+            }
+            
+            clearSelection();
+            document.getElementById('motorInfoPanel').classList.remove('visible');
+        });
+
+        // Add hover effect for meshes
+        let hoveredMesh = null;
+        function onMouseMove(event) {
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects(Object.values(linkMeshes));
+
+            let newHoveredMesh = null;
+
+            // Check if we're hovering over a mesh
+            if (intersects.length > 0) {
+                const mesh = intersects[0].object;
+                if (mesh.userData.motorData && mesh !== selectedMesh) {
+                    newHoveredMesh = mesh;
+                }
+            }
+
+            // Only update if hover state changed
+            if (newHoveredMesh !== hoveredMesh) {
+                // Clear previous hover
+                if (hoveredMesh && hoveredMesh !== selectedMesh) {
+                    const motorData = hoveredMesh.userData.motorData;
+                    if (motorData) {
+                        const temp = motorData.avg;
+                        const color = getTemperatureColor(temp);
+                        hoveredMesh.material.emissive = color;
+                        hoveredMesh.material.emissiveIntensity = 0.2 + (temp / 120) * 0.3;
+                    }
+                }
+
+                // Apply new hover
+                if (newHoveredMesh) {
+                    const motorData = newHoveredMesh.userData.motorData;
+                    if (motorData) {
+                        const temp = motorData.avg;
+                        const color = getTemperatureColor(temp);
+                        // Make it brighter by increasing emissive intensity
+                        newHoveredMesh.material.emissive = color;
+                        newHoveredMesh.material.emissiveIntensity = 0.5;
+                    }
+                    document.body.style.cursor = 'pointer';
+                } else {
+                    document.body.style.cursor = 'default';
+                }
+
+                hoveredMesh = newHoveredMesh;
+            } else if (newHoveredMesh) {
+                // Still hovering, keep cursor as pointer
+                document.body.style.cursor = 'pointer';
+            } else {
+                document.body.style.cursor = 'default';
+            }
+        }
+
+        window.addEventListener('mousemove', onMouseMove, false);
+
         // Control buttons
         document.getElementById('autoRotateBtn').addEventListener('click', function () {
             autoRotate = !autoRotate;
@@ -779,8 +1093,24 @@
             this.classList.toggle('active', autoRotate);
         });
 
+        document.getElementById('showPositionsBtn').addEventListener('click', function () {
+            showPositions = !showPositions;
+            this.textContent = `Show Positions: ${showPositions ? 'ON' : 'OFF'}`;
+            this.classList.toggle('active', showPositions);
+            
+            if (!showPositions) {
+                // Reset all joints to original positions when disabled
+                resetAllJointPositions();
+            } else {
+                // Re-apply current positions when enabled
+                if (motorData.positions && motorData.positions.length > 0) {
+                    updateMotorPositions(motorData.positions);
+                }
+            }
+        });
+
         document.getElementById('resetViewBtn').addEventListener('click', function () {
-            camera.position.set(3, 1.5, 3);
+            camera.position.set(0, 1.2, 2.5);
             controls.target.set(0, 0.5, 0);
             controls.update();
         });
@@ -807,6 +1137,9 @@
 
         socket.on('motor_update', function (data) {
             updateMotorTemperatures(data);
+            if (data.positions && data.positions.length > 0) {
+                updateMotorPositions(data.positions);
+            }
         });
 
         // Animation loop
@@ -828,6 +1161,9 @@
                 .then(data => {
                     if (data.temperatures && data.temperatures.length > 0) {
                         updateMotorTemperatures(data);
+                    }
+                    if (data.positions && data.positions.length > 0) {
+                        updateMotorPositions(data.positions);
                     }
                 });
         }

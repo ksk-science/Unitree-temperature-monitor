@@ -1,0 +1,11 @@
+[project]
+name = "Unitree-G1-Temperature-Monitor-dashboard"
+version = "0.1.0"
+description = "Real-time web dashboard for monitoring Unitree G1 robot motor temperature and show current positions"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "flask==3.0.0",
+    "flask-socketio==5.3.5",
+    "python-socketio==5.10.0",
+]

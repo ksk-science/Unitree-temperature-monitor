@@ -43,8 +43,30 @@ cd unitree-g1-temperature-monitor
 
 ### 2. Install Python Dependencies
 
+Choose one of the following methods:
+
+#### Option A: Using pip (Traditional)
+
 ```bash
 pip install -r requirements.txt
+```
+
+#### Option B: Using uv (Fast, Modern)
+
+[uv](https://github.com/astral-sh/uv) is a fast Python package installer and resolver. If you don't have it installed:
+
+```bash
+# Install uv (if not already installed)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Install dependencies using uv
+uv pip install -r requirements.txt
+```
+
+Or use uv with the pyproject.toml:
+
+```bash
+uv sync
 ```
 
 ### 3. Install Unitree SDK2 Python
@@ -54,10 +76,15 @@ The Unitree SDK2 Python library is required to connect to the G1 robot:
 ```bash
 # Clone the Unitree SDK2 Python repository
 git clone https://github.com/unitreerobotics/unitree_sdk2_python.git
-
-# Install the SDK
 cd unitree_sdk2_python
+
+# Install the SDK (choose one method)
+# Using pip:
 pip install -e .
+
+# OR using uv:
+uv pip install -e .
+
 cd ..
 ```
 
