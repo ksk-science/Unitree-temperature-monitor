@@ -77,16 +77,6 @@ def low_state_callback(msg: LowState_):
                     motor_info['torque'] = float(motor.tau_est)
                 
                 temps.append(motor_info)
-                
-                # Store both temperature values
-                temps.append({
-                    'motor_id': i,
-                    'motor_name': MOTOR_NAMES.get(i, f'Motor {i}'),
-                    'mesh_name': MOTOR_TO_MESH.get(i, ''),
-                    'temp1': int(motor.temperature[0]),
-                    'temp2': int(motor.temperature[1]),
-                    'avg': (int(motor.temperature[0]) + int(motor.temperature[1])) / 2.0
-                })
         
         with data_lock:
             motor_data['temperatures'] = temps
