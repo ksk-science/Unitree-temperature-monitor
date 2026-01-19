@@ -1,9 +1,9 @@
 import sys
 import time
-import json
 import os
 import secrets
-from threading import Thread, Lock
+import logging
+from threading import Lock
 from flask import Flask, render_template, jsonify, send_from_directory
 from flask_socketio import SocketIO
 
@@ -15,13 +15,19 @@ from config import MOTOR_NAMES, MOTOR_TO_MESH, URDF_FILENAME, URDF_PATH, DEFAULT
 app = Flask(__name__)
 # Use environment variable for secret key, fallback to random key for security
 app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY', secrets.token_hex(16))
-socketio = SocketIO(app, cors_allowed_origins="*")
+app.config['TEMPLATES_AUTO_RELOAD'] = True
+socketio = SocketIO(app, cors_allowed_origins="*", logger=False, engineio_logger=False)
+
+# Configure logging to suppress routine werkzeug messages
+log = logging.getLogger('werkzeug')
+log.setLevel(logging.ERROR)
 
 # Motor mappings imported from config.py
 
 # Global variable to store latest motor data
 motor_data = {
     'temperatures': [],
+    'positions': [],
     'timestamp': 0
 }
 data_lock = Lock()
@@ -33,6 +39,7 @@ def low_state_callback(msg: LowState_):
     
     if hasattr(msg, 'motor_state') and len(msg.motor_state) > 0:
         temps = []
+        positions = []
         for i, motor in enumerate(msg.motor_state):
             # Only process motors 0-28 (29 actual motors with DOF)
             # Skip motors 29-34 as they don't physically exist (hand palm links have no motors)
@@ -40,6 +47,37 @@ def low_state_callback(msg: LowState_):
                 continue
                 
             if hasattr(motor, 'temperature') and len(motor.temperature) > 0:
+                motor_info = {
+                    'motor_id': i,
+                    'motor_name': MOTOR_NAMES.get(i, f'Motor {i}'),
+                    'mesh_name': MOTOR_TO_MESH.get(i, ''),
+                }
+                
+                # Add temperature data
+                if hasattr(motor, 'temperature') and len(motor.temperature) > 0:
+                    motor_info['surface'] = int(motor.temperature[0])
+                    motor_info['winding'] = int(motor.temperature[1])
+                    motor_info['temp1'] = int(motor.temperature[0])
+                    motor_info['temp2'] = int(motor.temperature[1])
+                    motor_info['avg'] = (int(motor.temperature[0]) + int(motor.temperature[1])) / 2.0
+
+                # Add position data
+                if hasattr(motor, 'q'):
+                    motor_info['position'] = float(motor.q)
+                    positions.append({
+                        'motor_id': i,
+                        'position': float(motor.q),
+                        'link_name': MOTOR_TO_MESH.get(i, None),
+                    })
+                
+                # Add velocity and torque for future use
+                if hasattr(motor, 'dq'):
+                    motor_info['velocity'] = float(motor.dq)
+                if hasattr(motor, 'tau_est'):
+                    motor_info['torque'] = float(motor.tau_est)
+                
+                temps.append(motor_info)
+                
                 # Store both temperature values
                 temps.append({
                     'motor_id': i,
@@ -52,6 +90,7 @@ def low_state_callback(msg: LowState_):
         
         with data_lock:
             motor_data['temperatures'] = temps
+            motor_data['positions'] = positions
             motor_data['timestamp'] = time.time()
         
         # Emit data to all connected clients
@@ -130,6 +169,7 @@ def run_flask_app():
 def main():
     # Get network interface from command line if provided
     network_interface = sys.argv[1] if len(sys.argv) > 1 else None
+    print(f"Using network interface: {network_interface}")
     
     # Initialize robot subscriber
     try:
@@ -142,7 +182,7 @@ def main():
     print("\n" + "="*50)
     print("G1 3D Motor Temperature Dashboard")
     print("="*50)
-    print(f"Dashboard available at: http://localhost:8081")
+    print("Dashboard available at: http://localhost:8081")
     print("Press Ctrl+C to exit")
     print("="*50 + "\n")
     
