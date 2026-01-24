@@ -11,11 +11,16 @@ A stunning, interactive 3D visualization dashboard for monitoring Unitree G1 and
 
 - **🤖 Full 3D Robot Model**: Renders the complete G1 robot using actual STL mesh files from URDF
 - **🌡️ Real-time Temperature Visualization**: Color-coded temperature gradients (blue = cold 30°C, red = hot 120°C)
+- **🦾 Live Position Tracking**: Real-time motor position updates when running on the actual robot
+  - Toggle positions on/off with the "Show Positions" button
+  - Visualize actual joint angles in the 3D model
+  - View position data in both degrees and radians in the motor info panel
 - **🎮 Interactive Controls**: 
   - Orbit, zoom, and pan the 3D view
   - Click on robot parts to see detailed motor information
   - Auto-rotation mode
   - Wireframe toggle
+  - Position visualization toggle
 - **📊 Live Statistics**: Real-time min/max/average temperature tracking
 - **🎨 Modern UI**: Glassmorphism design with smooth animations
 - **⚡ WebSocket Updates**: Real-time data streaming from the robot
@@ -26,10 +31,18 @@ A stunning, interactive 3D visualization dashboard for monitoring Unitree G1 and
 The visualization displays all motors of the robot with:
 - **G1**: 29 motors (legs, torso, arms with full wrist articulation)
 - **H1**: 19 motors (legs, torso, arms without wrist joints)
-- Surface temperature (external housing)
-- Winding temperature (internal coil - typically hotter)
-- Average temperature with smooth color gradients
-- Interactive part selection for detailed motor info
+- **Temperature Monitoring**:
+  - Surface temperature (external housing)
+  - Winding temperature (internal coil - typically hotter)
+  - Average temperature with smooth color gradients
+- **Live Position Tracking** (when connected to real robot):
+  - Real-time joint angle visualization
+  - Accurate kinematic representation of robot pose
+  - Position data displayed in degrees and radians
+- **Interactive Features**:
+  - Click on any robot part for detailed motor information
+  - Toggle position visualization on/off
+  - Auto-rotation and wireframe modes
 
 ## 📋 Prerequisites
 
@@ -148,6 +161,7 @@ Then open your browser to: **http://localhost:8081**
 | **Zoom** | Mouse scroll wheel |
 | **Select Motor** | Click on robot part |
 | **Auto-Rotate** | Toggle button in controls panel |
+| **Show Positions** | Toggle live position updates (ON by default) |
 | **Reset View** | Reset camera button |
 | **Wireframe Mode** | Toggle wireframe button |
 
@@ -163,6 +177,33 @@ The visualization uses a smooth gradient to represent motor temperatures:
 | 75°C | 🟠 Orange | Hot |
 | 90°C+ | 🔴 Red | Very Hot |
 | 120°C | 🔴 Deep Red | Critical |
+
+## 🦾 Live Position Tracking
+
+When connected to a real G1 robot, the dashboard displays live motor positions in real-time:
+
+### How It Works
+- Motor position data (joint angles) is streamed via WebSocket alongside temperature data
+- The 3D model's joints are updated in real-time to match the robot's actual pose
+- Each joint rotates around its defined axis according to the URDF kinematic structure
+- Position updates can be toggled on/off without affecting temperature visualization
+
+### Features
+- **Real-time Visualization**: See the robot's exact pose as it moves
+- **Accurate Kinematics**: Uses URDF joint definitions for precise positioning
+- **Toggle Control**: Enable/disable position updates with the "Show Positions" button (ON by default)
+- **Detailed Information**: Click any motor to view position in both degrees and radians
+- **Smooth Updates**: Quaternion-based rotations for smooth, artifact-free joint movements
+
+### Use Cases
+- Monitor robot pose during teleoperation
+- Verify joint positions during autonomous tasks
+- Debug motion planning and control
+- Visualize robot configuration in real-time
+- Educational demonstrations of robot kinematics
+
+**Note**: Position tracking requires connection to a real robot. In test mode, only temperature simulation is available.
+
 
 ## 📁 Project Structure
 
@@ -198,6 +239,9 @@ unitree-g1-temperature-monitor/
 - **Flask**: Web server framework
 - **Flask-SocketIO**: Real-time WebSocket communication
 - **unitree_sdk2py**: Robot data interface
+  - Subscribes to `rt/lowstate` channel for motor data
+  - Extracts temperature (surface & winding) and position (q) data
+  - Streams data to frontend via WebSocket
 - Serves STL files and URDF from assets directory
 - Provides motor-to-mesh mapping API
 - Runs on port 8081
@@ -209,6 +253,10 @@ unitree-g1-temperature-monitor/
 - **Socket.IO**: Real-time data updates (served locally)
 - URDF parsing for kinematic tree construction
 - Dynamic material coloring based on temperature
+- **Live Position Updates**: 
+  - Quaternion-based joint rotations
+  - Respects URDF joint axes and types
+  - Smooth real-time position tracking
 - Raycasting for mesh selection
 - **Offline capable**: All JavaScript dependencies bundled locally
 
@@ -274,10 +322,13 @@ If not set, a random secret key will be generated automatically on each startup.
 ## 📝 Notes
 
 - **The dashboards ** run on port **8081**
+- **Position data** includes joint angles in radians (converted to degrees in UI)
+- The 3D model uses the official G1 URDF structure
 - Temperature data includes both surface and winding temperatures
-- The 3D models use the official Unitree URDF structures
 - Color gradients are interpolated smoothly for visual appeal
 - All motors are monitored simultaneously (29 for G1, 19 for H1)
+- **Live position tracking** is enabled by default when connected to a real robot
+- Position visualization can be toggled on/off independently of temperature monitoring
 
 ## 📧 Support
 
