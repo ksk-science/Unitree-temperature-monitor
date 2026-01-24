@@ -62,11 +62,9 @@ TEMP_WARM_THRESHOLD = 45
 TEMP_HOT_THRESHOLD = 60
 
 # URDF configuration
-#URDF_FILENAME = "h1.urdf"
-#URDF_FILENAME = "h1_hand.urdf"  # Uses .dae files (not supported)
-URDF_FILENAME = "h1_hand_stl.urdf"  # Uses .STL files (supported)
+URDF_FILENAME = "h1.urdf"
 URDF_PATH = "assets/h1"
 
 # Network configuration
-DEFAULT_PORT = 8082
+DEFAULT_PORT = 8081
 DEFAULT_HOST = "0.0.0.0"
