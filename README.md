@@ -1,5 +1,7 @@
 # Unitree G1/H1 3D Temperature Visualizer
 
+![G1 3D Visualizer Screenshot](Unitree_dashboard.jpg)
+
 A stunning, interactive 3D visualization dashboard for monitoring Unitree G1 and H1 robot motor temperatures in real-time. The dashboard renders the complete robot using actual STL models with dynamic temperature-based color gradients.
 
 - **G1**: 29DOF with rubber hands
