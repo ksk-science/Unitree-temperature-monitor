@@ -1,8 +1,11 @@
-# Unitree G1 3D Temperature Visualizer
+# Unitree G1/H1 3D Temperature Visualizer
 
 ![G1 3D Visualizer Screenshot](Unitree_dashboard.jpg)
 
-A stunning, interactive 3D visualization dashboard for monitoring Unitree G1 robot motor temperatures and positions in real-time. The dashboard renders the complete robot (29DOF with rubber hands) using actual STL models with dynamic temperature-based color gradients and live joint position updates.
+A stunning, interactive 3D visualization dashboard for monitoring Unitree G1 and H1 robot motor temperatures in real-time. The dashboard renders the complete robot using actual STL models with dynamic temperature-based color gradients.
+
+- **G1**: 29DOF with rubber hands
+- **H1**: 19DOF humanoid robot
 
 ![G1 3D Visualizer](https://img.shields.io/badge/Status-Production-green) ![Python](https://img.shields.io/badge/Python-3.8+-blue) ![License](https://img.shields.io/badge/License-MIT-yellow)
 
@@ -27,7 +30,9 @@ A stunning, interactive 3D visualization dashboard for monitoring Unitree G1 rob
 
 ## 🎬 Demo
 
-The visualization displays all 29 motors of the G1 robot with:
+The visualization displays all motors of the robot with:
+- **G1**: 29 motors (legs, torso, arms with full wrist articulation)
+- **H1**: 19 motors (legs, torso, arms without wrist joints)
 - **Temperature Monitoring**:
   - Surface temperature (external housing)
   - Winding temperature (internal coil - typically hotter)
@@ -44,7 +49,7 @@ The visualization displays all 29 motors of the G1 robot with:
 ## 📋 Prerequisites
 
 - Python 3.8 or higher
-- Unitree G1 robot (or test mode for development)
+- Unitree G1 or H1 robot (or test mode for development)
 - Network connection to robot (for live data)
 
 ## 🚀 Installation
@@ -60,13 +65,7 @@ cd unitree-g1-temperature-monitor
 
 Choose one of the following methods:
 
-#### Option A: Using pip (Traditional)
-
-```bash
-pip install -r requirements.txt
-```
-
-#### Option B: Using uv (Fast, Modern)
+#### Option A: Using uv (Fast, Modern)
 
 [uv](https://github.com/astral-sh/uv) is a fast Python package installer and resolver. If you don't have it installed:
 
@@ -74,19 +73,20 @@ pip install -r requirements.txt
 # Install uv (if not already installed)
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# Install dependencies using uv
-uv pip install -r requirements.txt
-```
-
-Or use uv with the pyproject.toml:
-
 ```bash
 uv sync
 ```
 
+#### Option B: Using pip (Traditional)
+
+```bash
+pip install -r requirements.txt
+```
+
+
 ### 3. Install Unitree SDK2 Python
 
-The Unitree SDK2 Python library is required to connect to the G1 robot:
+The Unitree SDK2 Python library is required to connect to the G1 or H1 robot:
 
 ```bash
 # Clone the Unitree SDK2 Python repository
@@ -103,15 +103,19 @@ uv pip install -e .
 cd ..
 ```
 
-**Note**: Make sure you have the correct network interface configured to communicate with your G1 robot.
+**Note**: Make sure you have the correct network interface configured to communicate with your robot.
 
 ### 4. Assets Included
 
 ✅ **All robot assets are included in this package!**
 
 The visualizer comes with:
-- URDF file: `assets/g1/g1_29dof_rev_1_0.urdf` (29DOF with rubber hands)
-- STL meshes: `assets/g1/meshes/*.STL` (69 mesh files)
+- **G1 Robot**:
+  - URDF file: `assets/g1/g1_29dof_rev_1_0.urdf` (29DOF with rubber hands)
+  - STL meshes: `assets/g1/meshes/*.STL` (69 mesh files)
+- **H1 Robot**:
+  - URDF file: `assets/h1/h1.urdf` (19DOF humanoid)
+  - STL meshes: `assets/h1/meshes/*.STL` (mesh files)
 - JavaScript libraries: `assets/js/` (Three.js, Socket.IO, OrbitControls - for offline use)
 
 No internet connection or additional asset downloads required - everything is ready to use!
@@ -120,7 +124,7 @@ No internet connection or additional asset downloads required - everything is re
 
 ### Quick Start (Test Mode)
 
-Test the visualizer with simulated data (no robot connection needed):
+Test the G1 visualizer with simulated data (no robot connection needed):
 
 ```bash
 python test_dashboard_3d.py
@@ -130,20 +134,25 @@ Then open your browser to: **http://localhost:8081**
 
 ### Production Mode (Real Robot)
 
-Connect to a real G1 robot:
+
+Connect to a real G1/H1 robot:
 
 ```bash
-python dashboard_3d.py <network_interface>
+python dashboard_3d.py --robot <robot_type> --interface <network_interface>
 ```
 
-Replace `<network_interface>` with your network interface name (e.g., `eth0`, `enp3s0`).
+Replace `<robot_type>` with the robot type - e.g. `g1`, `h1`). 
+Replace `<network_interface>` with your network interface name (e.g., `en0`, `eth0`, `enp3s0`).
 
-Example:
+
+Examples:
 ```bash
-python dashboard_3d.py eth0
+python dashboard_3d.py --robot g1 --interface en0
+python dashboard_3d.py --robot h1 --interface en0
 ```
 
 Then open your browser to: **http://localhost:8081**
+
 
 ## 🎮 Controls
 
@@ -202,24 +211,27 @@ When connected to a real G1 robot, the dashboard displays live motor positions i
 
 ```
 unitree-g1-temperature-monitor/
-├── dashboard_3d.py          # Main application (real robot data)
-├── test_dashboard_3d.py     # Test version with simulated data
-├── config.py                # Configuration and motor mappings
+├── dashboard_3d.py          # Main application
+├── config_g1.py                # G1 configuration and motor mappings
+├── config_h1.py             # H1 configuration and motor mappings
 ├── templates/
-│   └── index_3d.html        # 3D visualization frontend
+│   ├── index_g1.html        # G1 3D visualization frontend
+│   └── index_h1.html        # H1 3D visualization frontend
 ├── assets/
 │   ├── js/                  # Local JavaScript libraries (offline support)
 │   │   ├── socket.io.min.js
 │   │   ├── three.min.js
 │   │   ├── STLLoader.js
 │   │   └── OrbitControls.js
-│   └── g1/
-│       ├── g1_29dof_rev_1_0.urdf    # Robot URDF file (29DOF rubber hands, from Unitree)
-│       └── meshes/                   # STL mesh files (69 files, from Unitree)
+│   ├── g1/
+│   │   ├── g1_29dof_rev_1_0.urdf    # G1 URDF file (29DOF, from Unitree)
+│   │   └── meshes/                   # G1 STL mesh files (69 files, from Unitree)
+│   └── h1/
+│       ├── h1.urdf                   # H1 URDF file (19DOF, from Unitree)
+│       └── meshes/                   # H1 STL mesh files (from Unitree)
 ├── requirements.txt         # Python dependencies
 ├── README.md               # This file
 ├── INSTALL.md              # Quick installation guide
-├── start.sh                # Startup script
 └── PACKAGE.md              # Package overview
 ```
 
@@ -252,13 +264,19 @@ unitree-g1-temperature-monitor/
 
 ### Motor-to-Mesh Mapping
 
-The dashboard maps all 29 motors to their corresponding 3D mesh parts:
-
-- **Legs (0-11)**: Hip, knee, ankle joints
+#### G1 Robot (29 motors)
+- **Legs (0-11)**: Hip (yaw/roll/pitch), knee, ankle (pitch/roll)
 - **Torso (12-14)**: Waist yaw/roll/pitch
-- **Arms (15-28)**: Shoulder, elbow, wrist joints
+- **Arms (15-28)**: Shoulder (pitch/roll/yaw), elbow, wrist (roll/pitch/yaw)
 
 Note: Hand palm links are structural components without motors/temperature sensors.
+
+#### H1 Robot (19 motors)
+- **Legs (0-9)**: Hip (yaw/roll/pitch), knee, ankle
+- **Torso (10)**: Torso joint
+- **Arms (11-18)**: Shoulder (pitch/roll/yaw), elbow
+
+Note: H1 has simpler hands without wrist articulation, and a single torso joint instead of waist yaw/roll/pitch.
 
 ## 🐛 Troubleshooting
 
@@ -287,7 +305,7 @@ Note: Hand palm links are structural components without motors/temperature senso
 
 ## 🔒 Network Configuration
 
-The dashboard communicates with the G1 robot over the network. Ensure:
+The dashboard communicates with the G1/H1 robot over the network. Ensure:
 1. Your computer is connected to the same network as the robot
 2. The correct network interface is specified when running
 3. Firewall allows connections on port 8081
@@ -305,12 +323,12 @@ If not set, a random secret key will be generated automatically on each startup.
 
 ## 📝 Notes
 
-- The dashboard runs on port **8081** (to avoid conflicts with other services)
-- Temperature data includes both surface and winding temperatures
+- **The dashboards ** run on port **8081**
 - **Position data** includes joint angles in radians (converted to degrees in UI)
 - The 3D model uses the official G1 URDF structure
+- Temperature data includes both surface and winding temperatures
 - Color gradients are interpolated smoothly for visual appeal
-- All 29 motors are monitored simultaneously
+- All motors are monitored simultaneously (29 for G1, 19 for H1)
 - **Live position tracking** is enabled by default when connected to a real robot
 - Position visualization can be toggled on/off independently of temperature monitoring
 
@@ -330,5 +348,3 @@ For issues or questions:
 - **Robot assets** (URDF and STL mesh files) are provided by [Unitree Robotics](https://www.unitree.com/) as part of the G1 robot package
 
 ---
-
-**Made with ❤️ for the Unitree G1 robotics community**

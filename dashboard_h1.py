@@ -3,22 +3,15 @@ import time
 import os
 import secrets
 import logging
-import argparse
 from threading import Lock
 from flask import Flask, render_template, jsonify, send_from_directory
 from flask_socketio import SocketIO
 
 from unitree_sdk2py.core.channel import ChannelSubscriber, ChannelFactoryInitialize
+# H1 uses unitree_go message types, not unitree_hg
+from unitree_sdk2py.idl.unitree_go.msg.dds_ import LowState_
 
-# Robot type will be set at runtime
-ROBOT_TYPE = None
-MOTOR_NAMES = None
-MOTOR_TO_MESH = None
-URDF_FILENAME = None
-URDF_PATH = None
-DEFAULT_PORT = None
-DEFAULT_HOST = None
-LowState_ = None
+from config_h1 import MOTOR_NAMES, MOTOR_TO_MESH, URDF_FILENAME, URDF_PATH, DEFAULT_PORT, DEFAULT_HOST
 
 app = Flask(__name__)
 # Use environment variable for secret key, fallback to random key for security
@@ -30,6 +23,8 @@ socketio = SocketIO(app, cors_allowed_origins="*", logger=False, engineio_logger
 log = logging.getLogger('werkzeug')
 log.setLevel(logging.ERROR)
 
+# Motor mappings imported from config_h1.py
+
 # Global variable to store latest motor data
 motor_data = {
     'temperatures': [],
@@ -39,53 +34,7 @@ motor_data = {
 data_lock = Lock()
 
 
-def load_robot_config(robot_type):
-    """Load configuration based on robot type."""
-    global ROBOT_TYPE, MOTOR_NAMES, MOTOR_TO_MESH, URDF_FILENAME, URDF_PATH, DEFAULT_PORT, DEFAULT_HOST, LowState_
-    
-    ROBOT_TYPE = robot_type.upper()
-    
-    if ROBOT_TYPE == 'G1':
-        from unitree_sdk2py.idl.unitree_hg.msg.dds_ import LowState_ as G1_LowState
-        from config_g1 import (
-            MOTOR_NAMES as G1_MOTOR_NAMES,
-            MOTOR_TO_MESH as G1_MOTOR_TO_MESH,
-            URDF_FILENAME as G1_URDF_FILENAME,
-            URDF_PATH as G1_URDF_PATH,
-            DEFAULT_PORT as G1_DEFAULT_PORT,
-            DEFAULT_HOST as G1_DEFAULT_HOST
-        )
-        LowState_ = G1_LowState
-        MOTOR_NAMES = G1_MOTOR_NAMES
-        MOTOR_TO_MESH = G1_MOTOR_TO_MESH
-        URDF_FILENAME = G1_URDF_FILENAME
-        URDF_PATH = G1_URDF_PATH
-        DEFAULT_PORT = G1_DEFAULT_PORT
-        DEFAULT_HOST = G1_DEFAULT_HOST
-        
-    elif ROBOT_TYPE == 'H1':
-        from unitree_sdk2py.idl.unitree_go.msg.dds_ import LowState_ as H1_LowState
-        from config_h1 import (
-            MOTOR_NAMES as H1_MOTOR_NAMES,
-            MOTOR_TO_MESH as H1_MOTOR_TO_MESH,
-            URDF_FILENAME as H1_URDF_FILENAME,
-            URDF_PATH as H1_URDF_PATH,
-            DEFAULT_PORT as H1_DEFAULT_PORT,
-            DEFAULT_HOST as H1_DEFAULT_HOST
-        )
-        LowState_ = H1_LowState
-        MOTOR_NAMES = H1_MOTOR_NAMES
-        MOTOR_TO_MESH = H1_MOTOR_TO_MESH
-        URDF_FILENAME = H1_URDF_FILENAME
-        URDF_PATH = H1_URDF_PATH
-        DEFAULT_PORT = H1_DEFAULT_PORT
-        DEFAULT_HOST = H1_DEFAULT_HOST
-        
-    else:
-        raise ValueError(f"Unknown robot type: {robot_type}. Must be 'g1' or 'h1'")
-
-
-def low_state_callback(msg):
+def low_state_callback(msg: LowState_):
     """Callback function to process received LowState data and update dashboard."""
     global motor_data
     
@@ -93,11 +42,9 @@ def low_state_callback(msg):
         temps = []
         positions = []
         for i, motor in enumerate(msg.motor_state):
-            # G1: Only process motors 0-28 (29 actual motors with DOF)
-            # H1: Process all motors we have mappings for
-            if ROBOT_TYPE == 'G1' and i >= 29:
-                continue
-            if ROBOT_TYPE == 'H1' and i >= len(MOTOR_NAMES):
+            # H1 actually has 20 motors in the message (not 19)
+            # Process all motors we have mappings for
+            if i >= len(MOTOR_NAMES):
                 continue
                 
             motor_info = {
@@ -106,11 +53,11 @@ def low_state_callback(msg):
                 'mesh_name': MOTOR_TO_MESH.get(i, ''),
             }
             
-            # Add temperature data - handle both G1 and H1 formats
+            # Add temperature data - Go series format may differ from HG series
             if hasattr(motor, 'temperature'):
                 temp = motor.temperature
                 try:
-                    # Try array format (like G1 with [surface, winding])
+                    # Try array format (like HG series with [surface, winding])
                     if hasattr(temp, '__len__') and len(temp) >= 2:
                         motor_info['surface'] = int(temp[0])
                         motor_info['winding'] = int(temp[1])
@@ -125,7 +72,7 @@ def low_state_callback(msg):
                         motor_info['temp2'] = int(temp[0])
                         motor_info['avg'] = int(temp[0])
                     else:
-                        # Single temperature value (not array) - H1 format
+                        # Single temperature value (not array)
                         motor_info['surface'] = int(temp)
                         motor_info['winding'] = int(temp)
                         motor_info['temp1'] = int(temp)
@@ -170,6 +117,8 @@ def init_robot_subscriber(network_interface=None):
     print("Initializing robot connection...")
     print(f"Network interface: {network_interface}")
     
+    # Try different domain IDs - H1 might use a different domain than G1
+    # Domain 0 is standard, but H1 might use 1
     domain_id = 0
     
     try:
@@ -195,10 +144,7 @@ def init_robot_subscriber(network_interface=None):
 @app.route('/')
 def index():
     """Serve the main 3D dashboard page."""
-    if ROBOT_TYPE == 'G1':
-        return render_template('index_g1.html')
-    else:  # H1
-        return render_template('index_h1.html')
+    return render_template('index_h1.html')
 
 
 @app.route('/api/motors')
@@ -250,36 +196,22 @@ def run_flask_app():
 
 
 def main():
-    # Parse command line arguments
-    parser = argparse.ArgumentParser(description='Unitree Robot 3D Motor Dashboard')
-    parser.add_argument('--robot', '-r', type=str, choices=['g1', 'h1'], required=True,
-                        help='Robot type: g1 or h1')
-    parser.add_argument('--interface', '-i', type=str, default=None,
-                        help='Network interface (e.g., en0, eth0, enp3s0)')
-    args = parser.parse_args()
-    
-    # Load robot configuration
-    try:
-        load_robot_config(args.robot)
-        print(f"Loaded configuration for {ROBOT_TYPE} robot")
-    except Exception as e:
-        print(f"Error loading robot configuration: {e}")
-        sys.exit(1)
-    
-    print(f"Using network interface: {args.interface}")
+    # Get network interface from command line if provided
+    network_interface = sys.argv[1] if len(sys.argv) > 1 else None
+    print(f"Using network interface: {network_interface}")
     
     # Initialize robot subscriber
     try:
-        init_robot_subscriber(args.interface)
+        init_robot_subscriber(network_interface)
     except Exception as e:
         print(f"Error initializing robot connection: {e}")
         print("Starting dashboard anyway (no live data will be available)")
     
     # Start Flask app
     print("\n" + "="*50)
-    print(f"{ROBOT_TYPE} 3D Motor Temperature Dashboard")
+    print("H1 3D Motor Temperature Dashboard")
     print("="*50)
-    print(f"Dashboard available at: http://localhost:{DEFAULT_PORT}")
+    print("Dashboard available at: http://localhost:8082")
     print("Press Ctrl+C to exit")
     print("="*50 + "\n")
     
