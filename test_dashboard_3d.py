@@ -13,7 +13,7 @@ from threading import Thread
 from flask import Flask, render_template, jsonify, send_from_directory
 from flask_socketio import SocketIO
 
-from config import MOTOR_NAMES, MOTOR_TO_MESH, URDF_FILENAME, URDF_PATH, DEFAULT_PORT, DEFAULT_HOST
+from config_g1 import MOTOR_NAMES, MOTOR_TO_MESH, URDF_FILENAME, URDF_PATH, DEFAULT_PORT, DEFAULT_HOST
 
 app = Flask(__name__)
 # Use environment variable for secret key, fallback to random key for security
@@ -54,7 +54,7 @@ def update_loop():
 
 @app.route('/')
 def index():
-    return render_template('index_3d.html')
+    return render_template('index_g1.html')
 
 @app.route('/api/motors')
 def get_motors():
