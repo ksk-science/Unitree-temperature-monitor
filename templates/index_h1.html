@@ -3,7 +3,7 @@
 
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>H1 3D Temperature Visualization</title>
     <script src="/assets/js/socket.io.min.js"></script>
     <script src="/assets/js/three.min.js"></script>
@@ -15,6 +15,8 @@
             margin: 0;
             padding: 0;
             box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent;
+            -webkit-touch-callout: none;
         }
 
         body {
@@ -23,12 +25,23 @@
             color: #ffffff;
             overflow: hidden;
             height: 100vh;
+            touch-action: none;
         }
 
         #canvas-container {
             width: 100%;
             height: 100vh;
             position: relative;
+            touch-action: none;
+        }
+
+        /* Prevent text selection */
+        canvas {
+            -webkit-user-select: none;
+            -moz-user-select: none;
+            -ms-user-select: none;
+            user-select: none;
+            outline: none;
         }
 
         /* Header */
@@ -47,6 +60,19 @@
             padding: 15px 25px;
             border: 1px solid rgba(255, 255, 255, 0.2);
             box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            transition: transform 0.3s ease, opacity 0.3s ease;
+        }
+
+        .header.collapsed {
+            transform: translateY(-100px);
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        .header-controls {
+            display: flex;
+            gap: 10px;
+            align-items: center;
         }
 
         .header h1 {
@@ -101,12 +127,45 @@
             border: 1px solid rgba(255, 255, 255, 0.2);
             box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
             min-width: 250px;
+            transition: transform 0.3s ease, opacity 0.3s ease;
+        }
+
+        .stats-panel.collapsed {
+            transform: translateX(-100%);
+            opacity: 0;
+            pointer-events: none;
         }
 
         .stats-panel h2 {
             font-size: 1.1em;
             margin-bottom: 15px;
             font-weight: 600;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .panel-close-btn {
+            background: rgba(239, 68, 68, 0.3);
+            border: 1px solid rgba(239, 68, 68, 0.5);
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            color: white;
+            font-size: 16px;
+            line-height: 1;
+            transition: all 0.3s ease;
+            -webkit-tap-highlight-color: rgba(239, 68, 68, 0.3);
+            margin-left: 10px;
+        }
+
+        .panel-close-btn:hover {
+            background: rgba(239, 68, 68, 0.6);
+            transform: scale(1.1);
         }
 
         .stat-item {
@@ -143,12 +202,22 @@
             padding: 20px;
             border: 1px solid rgba(255, 255, 255, 0.2);
             box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            transition: transform 0.3s ease, opacity 0.3s ease;
+        }
+
+        .temp-legend.collapsed {
+            transform: translateX(-100%);
+            opacity: 0;
+            pointer-events: none;
         }
 
         .temp-legend h3 {
             font-size: 1em;
             margin-bottom: 12px;
             font-weight: 600;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
         }
 
         .gradient-bar {
@@ -185,12 +254,22 @@
             border: 1px solid rgba(255, 255, 255, 0.2);
             box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
             width: 250px;
+            transition: transform 0.3s ease, opacity 0.3s ease;
+        }
+
+        .controls-panel.collapsed {
+            transform: translateX(100%);
+            opacity: 0;
+            pointer-events: none;
         }
 
         .controls-panel h2 {
             font-size: 1.1em;
             margin-bottom: 8px;
             font-weight: 600;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
         }
 
         .control-btn {
@@ -207,6 +286,7 @@
             font-weight: 500;
             white-space: nowrap;
             line-height: 1.2;
+            -webkit-tap-highlight-color: rgba(102, 126, 234, 0.3);
         }
 
         .control-btn:hover {
@@ -218,6 +298,68 @@
         .control-btn.active {
             background: rgba(102, 126, 234, 0.7);
             border-color: rgba(102, 126, 234, 0.9);
+        }
+
+        /* Toggle Panels Button */
+        .toggle-panels-btn {
+            background: rgba(102, 126, 234, 0.3);
+            border: 1px solid rgba(102, 126, 234, 0.5);
+            border-radius: 6px;
+            color: white;
+            padding: 8px 12px;
+            cursor: pointer;
+            font-size: 0.9em;
+            transition: all 0.3s ease;
+        }
+
+        .toggle-panels-btn:hover {
+            background: rgba(102, 126, 234, 0.5);
+        }
+
+        /* Show Panel Buttons */
+        .show-panel-btn {
+            position: absolute;
+            z-index: 99;
+            background: rgba(102, 126, 234, 0.3);
+            border: 1px solid rgba(102, 126, 234, 0.5);
+            border-radius: 6px;
+            color: white;
+            padding: 8px 12px;
+            cursor: pointer;
+            font-size: 0.9em;
+            transition: all 0.3s ease;
+            opacity: 0.7;
+            display: none;
+        }
+
+        .show-panel-btn:hover {
+            background: rgba(102, 126, 234, 0.5);
+            opacity: 1;
+        }
+
+        .show-header-btn {
+            top: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+        }
+
+        .show-stats-btn {
+            top: 90px;
+            left: 10px;
+        }
+
+        .show-controls-btn {
+            top: 90px;
+            right: 10px;
+        }
+
+        .show-legend-btn {
+            bottom: 10px;
+            left: 10px;
+        }
+
+        .show-panel-btn.visible {
+            display: block;
         }
 
         /* Motor Info Panel */
@@ -236,10 +378,15 @@
             max-height: 300px;
             overflow-y: auto;
             display: none;
+            transition: transform 0.3s ease;
         }
 
         .motor-info-panel.visible {
             display: block;
+        }
+
+        .motor-info-panel.collapsed {
+            transform: translateX(100%);
         }
 
         .motor-info-panel h3 {
@@ -266,6 +413,7 @@
             font-size: 16px;
             line-height: 1;
             transition: all 0.3s ease;
+            -webkit-tap-highlight-color: rgba(239, 68, 68, 0.3);
         }
 
         .close-btn:hover {
@@ -353,6 +501,243 @@
             font-size: 0.9em;
             color: rgba(255, 255, 255, 0.6);
         }
+
+        /* Mobile Optimizations */
+        @media (max-width: 768px) {
+            .header {
+                top: 10px;
+                left: 10px;
+                right: 10px;
+                padding: 12px 15px;
+            }
+
+            .header h1 {
+                font-size: 1.2em;
+            }
+
+            .stats-panel {
+                top: 80px;
+                left: 10px;
+                right: 10px;
+                min-width: auto;
+                width: calc(100% - 20px);
+                padding: 15px;
+            }
+
+            .stats-panel h2 {
+                font-size: 1em;
+            }
+
+            .stat-item {
+                margin-bottom: 8px;
+                padding: 6px 0;
+            }
+
+            .stat-label {
+                font-size: 0.85em;
+            }
+
+            .stat-value {
+                font-size: 1em;
+            }
+
+            .temp-legend {
+                bottom: 10px;
+                left: 10px;
+                right: 10px;
+                padding: 15px;
+                width: calc(100% - 20px);
+            }
+
+            .gradient-bar {
+                width: 100%;
+                height: 16px;
+            }
+
+            .controls-panel {
+                top: auto;
+                bottom: 220px;
+                right: 10px;
+                left: 10px;
+                width: calc(100% - 20px);
+            }
+
+            .controls-panel h2 {
+                font-size: 1em;
+            }
+
+            .control-btn {
+                padding: 10px;
+                margin-bottom: 8px;
+                font-size: 0.95em;
+                touch-action: manipulation;
+            }
+
+            .motor-info-panel {
+                bottom: 10px;
+                right: 10px;
+                left: 10px;
+                width: calc(100% - 20px);
+                max-height: 250px;
+                padding: 15px;
+            }
+
+            .motor-info-panel h3 {
+                font-size: 1em;
+            }
+
+            .close-btn {
+                width: 28px;
+                height: 28px;
+                font-size: 18px;
+            }
+
+            .toggle-panels-btn {
+                padding: 6px 10px;
+                font-size: 0.85em;
+            }
+
+            .show-panel-btn {
+                padding: 6px 10px;
+                font-size: 0.8em;
+            }
+
+            .show-header-btn {
+                top: 5px;
+            }
+
+            .show-stats-btn {
+                top: 70px;
+                left: 10px;
+            }
+
+            .show-controls-btn {
+                top: auto;
+                bottom: 210px;
+                right: 10px;
+            }
+
+            .show-legend-btn {
+                bottom: 5px;
+                left: 10px;
+            }
+
+            /* Mobile-specific touch controls hint */
+            .touch-hint {
+                position: absolute;
+                bottom: 280px;
+                left: 50%;
+                transform: translateX(-50%);
+                background: rgba(0, 0, 0, 0.7);
+                color: white;
+                padding: 8px 12px;
+                border-radius: 10px;
+                font-size: 0.85em;
+                z-index: 101;
+                text-align: center;
+                backdrop-filter: blur(5px);
+                border: 1px solid rgba(255, 255, 255, 0.2);
+                display: none;
+            }
+
+            .touch-hint.visible {
+                display: block;
+                animation: fadeInOut 3s ease-in-out;
+            }
+
+            @keyframes fadeInOut {
+                0%, 100% { opacity: 0; }
+                20%, 80% { opacity: 1; }
+            }
+        }
+
+        @media (max-width: 480px) {
+            .header {
+                padding: 10px;
+            }
+
+            .header h1 {
+                font-size: 1.1em;
+            }
+
+            .stats-panel {
+                top: 70px;
+                padding: 12px;
+            }
+
+            .temp-legend {
+                padding: 12px;
+            }
+
+            .temp-legend h3 {
+                font-size: 0.95em;
+            }
+
+            .gradient-labels {
+                font-size: 0.8em;
+            }
+
+            .controls-panel {
+                bottom: 210px;
+                padding: 8px;
+            }
+
+            .control-btn {
+                padding: 8px;
+                font-size: 0.9em;
+            }
+
+            .motor-info-panel {
+                padding: 12px;
+                max-height: 200px;
+            }
+
+            .motor-detail {
+                font-size: 0.9em;
+            }
+        }
+
+        /* High DPI screens */
+        @media (min-width: 769px) and (max-width: 1024px) {
+            .header {
+                top: 15px;
+                left: 15px;
+                right: 15px;
+                padding: 15px 20px;
+            }
+
+            .stats-panel,
+            .controls-panel,
+            .temp-legend,
+            .motor-info-panel {
+                padding: 15px;
+            }
+        }
+
+        /* Prevent zoom on double tap for mobile */
+        @media (hover: none) and (pointer: coarse) {
+            .control-btn {
+                min-height: 44px; /* Apple recommends at least 44px for touch targets */
+            }
+
+            .close-btn {
+                min-width: 44px;
+                min-height: 44px;
+            }
+            
+            .panel-close-btn {
+                min-width: 44px;
+                min-height: 44px;
+            }
+            
+            .toggle-panels-btn {
+                min-height: 44px;
+            }
+            
+            .show-panel-btn {
+                min-height: 44px;
+            }
+        }
     </style>
 </head>
 
@@ -367,18 +752,30 @@
     <!-- Canvas Container -->
     <div id="canvas-container"></div>
 
+    <!-- Touch hint for mobile -->
+    <div class="touch-hint" id="touchHint">Tap robot parts to see details. Use two fingers to pan.</div>
+
+    <!-- Show Panel Buttons (hidden by default) -->
+    <button class="show-panel-btn show-header-btn" id="showHeaderBtn">Show Header</button>
+    <button class="show-panel-btn show-stats-btn" id="showStatsBtn">Show Stats</button>
+    <button class="show-panel-btn show-controls-btn" id="showControlsBtn">Show Controls</button>
+    <button class="show-panel-btn show-legend-btn" id="showLegendBtn">Show Legend</button>
+
     <!-- Header -->
     <div class="header">
         <h1>🤖 H1 3D Temperature Monitor</h1>
-        <div class="status">
-            <div class="status-indicator" id="statusIndicator"></div>
-            <span id="statusText">Connecting...</span>
+        <div class="header-controls">
+            <button class="toggle-panels-btn" id="toggleAllPanelsBtn">Hide All Panels</button>
+            <div class="status">
+                <div class="status-indicator" id="statusIndicator"></div>
+                <span id="statusText">Connecting...</span>
+            </div>
         </div>
     </div>
 
     <!-- Stats Panel -->
     <div class="stats-panel">
-        <h2>📊 Statistics</h2>
+        <h2>📊 Statistics <button class="panel-close-btn" id="closeStatsPanel" title="Close">×</button></h2>
         <div class="stat-item">
             <span class="stat-label">Total Motors</span>
             <span class="stat-value" id="totalMotors">0</span>
@@ -403,7 +800,7 @@
 
     <!-- Controls Panel -->
     <div class="controls-panel">
-        <h2>🎮 Controls</h2>
+        <h2>🎮 Controls <button class="panel-close-btn" id="closeControlsPanel" title="Close">×</button></h2>
         <button class="control-btn" id="autoRotateBtn">Auto Rotate: OFF</button>
         <button class="control-btn active" id="showPositionsBtn">Show Positions: ON</button>
         <button class="control-btn" id="resetViewBtn">Reset Camera</button>
@@ -412,7 +809,7 @@
 
     <!-- Temperature Legend -->
     <div class="temp-legend">
-        <h3>🌡️ Temperature Scale</h3>
+        <h3>🌡️ Temperature Scale <button class="panel-close-btn" id="closeTempLegend" title="Close">×</button></h3>
         <div class="gradient-bar"></div>
         <div class="gradient-labels">
             <span>30°C</span>
@@ -440,9 +837,32 @@
         let motorToJoint = {}; // Map of motor IDs to joint names
         let motorData = {};
         let selectedMesh = null; // Currently selected mesh
+        let selectedMotorId = null; // ID of currently selected motor
         let autoRotate = false;
         let wireframeMode = false;
         let showPositions = true; // Enable position updates by default
+        
+        // Mobile detection and touch handling
+        let isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+        let touchStartTime = 0;
+        let touchStartX = 0;
+        let touchStartY = 0;
+        let touchMoved = false;
+        let touchStartDistance = 0;
+        let isPinching = false;
+        let isPanning = false;
+        const TOUCH_MOVE_THRESHOLD = 15; // pixels
+        const TOUCH_HOLD_THRESHOLD = 200; // ms
+        
+        // Panel visibility state
+        let panelsVisible = {
+            header: true,
+            stats: true,
+            controls: true,
+            legend: true,
+            motorInfo: false
+        };
+        
         const socket = io();
 
         // Temperature color mapping
@@ -582,7 +1002,7 @@
             return { links, joints };
         }
 
-        // Initialize Three.js scene
+        // Initialize Three.js scene with mobile optimizations
         function initScene() {
             scene = new THREE.Scene();
             scene.background = new THREE.Color(0x0f0c29);
@@ -595,34 +1015,72 @@
                 1000
             );
             // Position camera closer and facing the front of the robot
-            camera.position.set(0, 0.5, 2.5);  // Lowered camera for H1 (taller robot)
+            camera.position.set(0, 1.5, 3.5);  // Lowered camera for H1 (taller robot)
             camera.lookAt(0, 0.8, 0);  // Look at center of H1
 
-            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer = new THREE.WebGLRenderer({ 
+                antialias: true,
+                powerPreference: isMobile ? "low-power" : "default",
+                alpha: false
+            });
             renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.setPixelRatio(window.devicePixelRatio);
-            renderer.shadowMap.enabled = true;
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, isMobile ? 1 : 2));
+            renderer.shadowMap.enabled = !isMobile; // Disable shadows on mobile for performance
             renderer.shadowMap.type = THREE.PCFSoftShadowMap;
             document.getElementById('canvas-container').appendChild(renderer.domElement);
 
             controls = new THREE.OrbitControls(camera, renderer.domElement);
             controls.enableDamping = true;
-            controls.dampingFactor = 0.05;
+            controls.dampingFactor = isMobile ? 0.1 : 0.05;
             controls.autoRotate = autoRotate;
             controls.autoRotateSpeed = 1.0;
-            controls.target.set(0, 0.85, 0);  // Center target for H1
+            controls.target.set(0, 0.8, 0);  // Center target for H1
+            
+            // Mobile-specific orbit controls settings
+            if (isMobile) {
+                controls.enablePan = false; 
+                controls.enableZoom = true;
+                controls.rotateSpeed = 0.7;
+                controls.zoomSpeed = 0.15;
+                controls.maxPolarAngle = Math.PI * 0.9; // Prevent flipping
+                controls.minDistance = 0.3;
+                controls.maxDistance = 10;
 
-            const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+                controls.mouseButtons = {
+                    LEFT: THREE.MOUSE.ROTATE,
+                    MIDDLE: THREE.MOUSE.DOLLY,
+                    RIGHT: THREE.MOUSE.PAN
+                };
+                
+                controls.touches = {
+                    ONE: THREE.TOUCH.ROTATE,
+                    TWO: THREE.TOUCH.DOLLY_PAN
+                };
+                
+                
+                controls.enableDamping = true;
+                controls.dampingFactor = 0.35;
+                controls.screenSpacePanning = true; 
+                
+               
+                controls.zoom0 = 1.0;
+                controls.minZoom = 0.25;
+                controls.maxZoom = 10.0; 
+            }
+
+            const ambientLight = new THREE.AmbientLight(0xffffff, isMobile ? 0.7 : 0.5);
             scene.add(ambientLight);
 
-            const directionalLight1 = new THREE.DirectionalLight(0xffffff, 0.8);
-            directionalLight1.position.set(5, 10, 5);
-            directionalLight1.castShadow = true;
-            scene.add(directionalLight1);
+            if (!isMobile) {
+                const directionalLight1 = new THREE.DirectionalLight(0xffffff, 0.8);
+                directionalLight1.position.set(5, 10, 5);
+                directionalLight1.castShadow = true;
+                scene.add(directionalLight1);
 
-            const directionalLight2 = new THREE.DirectionalLight(0xffffff, 0.4);
-            directionalLight2.position.set(-5, 5, -5);
-            scene.add(directionalLight2);
+                const directionalLight2 = new THREE.DirectionalLight(0xffffff, 0.4);
+                directionalLight2.position.set(-5, 5, -5);
+                scene.add(directionalLight2);
+            }
 
             const gridHelper = new THREE.GridHelper(10, 10, 0x667eea, 0x302b63);
             gridHelper.position.y = -0.01;
@@ -630,16 +1088,229 @@
 
             window.addEventListener('resize', onWindowResize, false);
 
+            // Add touch event listeners for mobile
+            if (isMobile) {
+                setupMobileTouchEvents();
+                
+                // Show touch hint briefly
+                const touchHint = document.getElementById('touchHint');
+                touchHint.classList.add('visible');
+                setTimeout(() => {
+                    touchHint.classList.remove('visible');
+                }, 3000);
+            }
+
             // Create robot root
             robotRoot = new THREE.Group();
             robotRoot.name = 'robot_root';
             scene.add(robotRoot);
         }
 
+        function setupMobileTouchEvents() {
+            const canvas = renderer.domElement;
+            
+            canvas.addEventListener('touchstart', onTouchStart, { passive: false });
+            canvas.addEventListener('touchmove', onTouchMove, { passive: false });
+            canvas.addEventListener('touchend', onTouchEnd, { passive: false });
+            canvas.addEventListener('touchcancel', onTouchEnd, { passive: false });
+            
+            // Prevent context menu on long press
+            canvas.addEventListener('contextmenu', (e) => {
+                e.preventDefault();
+                return false;
+            });
+        }
+
+        function getDistanceBetweenTouches(touches) {
+            if (touches.length < 2) return 0;
+            const dx = touches[0].clientX - touches[1].clientX;
+            const dy = touches[0].clientY - touches[1].clientY;
+            return Math.sqrt(dx * dx + dy * dy);
+        }
+
+        function onTouchStart(event) {
+            event.preventDefault();
+            
+            if (event.touches.length === 1) {
+                const touch = event.touches[0];
+                touchStartTime = Date.now();
+                touchStartX = touch.clientX;
+                touchStartY = touch.clientY;
+                touchMoved = false;
+                isPinching = false;
+                isPanning = false;
+                
+                // Temporarily disable rotation to check for object click
+                controls.enableRotate = false;
+            } else if (event.touches.length === 2) {
+                // Two fingers - enable panning and disable rotation
+                isPinching = true;
+                isPanning = true;
+                touchStartDistance = getDistanceBetweenTouches(event.touches);
+                
+                // Store initial touch positions for panning
+                touchStartX1 = event.touches[0].clientX;
+                touchStartY1 = event.touches[0].clientY;
+                touchStartX2 = event.touches[1].clientX;
+                touchStartY2 = event.touches[1].clientY;
+                
+                // Store initial camera position and target
+                lastCameraPosition = camera.position.clone();
+                lastTargetPosition = controls.target.clone();
+                
+                // Disable OrbitControls for two-finger gestures
+                controls.enabled = false;
+                
+                event.preventDefault();
+            }
+        }
+
+
+        function onTouchMove(event) {
+            event.preventDefault();
+            
+            if (event.touches.length === 1 && !isPinching) {
+                const touch = event.touches[0];
+                const deltaX = Math.abs(touch.clientX - touchStartX);
+                const deltaY = Math.abs(touch.clientY - touchStartY);
+                
+                if (deltaX > TOUCH_MOVE_THRESHOLD || deltaY > TOUCH_MOVE_THRESHOLD) {
+                    touchMoved = true;
+                    // Re-enable rotation if user is dragging
+                    controls.enabled = true;
+                    controls.enableRotate = true;
+                    controls.enablePan = false;
+                }
+            } else if (event.touches.length === 2) {
+                // Two finger pan/zoom gesture
+                isPinching = true;
+                isPanning = true;
+                
+                // Disable OrbitControls during two-finger gesture
+                controls.enabled = false;
+                
+                // Get current touch positions
+                const touch1 = event.touches[0];
+                const touch2 = event.touches[1];
+                
+                // Calculate pinch zoom
+                const currentDistance = getDistanceBetweenTouches(event.touches);
+                
+                if (touchStartDistance > 0) {
+                    const zoomDelta = currentDistance - touchStartDistance;
+                    const zoomFactor = 1.0 + (zoomDelta * 0.005);
+                    
+                    // Smooth zoom adjustment
+                    camera.position.lerp(
+                        lastCameraPosition.clone().multiplyScalar(1/zoomFactor), 
+                        0.1
+                    );
+                }
+                
+                // Calculate pan movement (average of both touches)
+                const avgStartX = (touchStartX1 + touchStartX2) / 2;
+                const avgStartY = (touchStartY1 + touchStartY2) / 2;
+                const avgCurrentX = (touch1.clientX + touch2.clientX) / 2;
+                const avgCurrentY = (touch1.clientY + touch2.clientY) / 2;
+                
+                // Calculate pan delta in normalized device coordinates
+                const panDeltaX = (avgCurrentX - avgStartX) * 0.0025;
+                const panDeltaY = (avgCurrentY - avgStartY) * 0.0025;
+                
+                // Create pan vector in camera space
+                const panVector = new THREE.Vector3(-panDeltaX, panDeltaY, 0);
+                
+                // Transform to world space
+                panVector.applyQuaternion(camera.quaternion);
+                
+                // Apply pan to camera position and target
+                camera.position.add(panVector);
+                controls.target.add(panVector);
+                
+                // Update start positions for next frame
+                touchStartX1 = touch1.clientX;
+                touchStartY1 = touch1.clientY;
+                touchStartX2 = touch2.clientX;
+                touchStartY2 = touch2.clientY;
+                
+                event.preventDefault();
+            }
+        }
+            
+        function onTouchEnd(event) {
+            if (event.touches.length === 0) {
+                const touchTime = Date.now() - touchStartTime;
+                
+                // If it was a quick tap without much movement, treat as click
+                if (!touchMoved && !isPinching && touchTime < TOUCH_HOLD_THRESHOLD) {
+                    const touch = event.changedTouches[0];
+                    handleTouchClick(touch);
+                }
+                
+                // Reset states
+                isPinching = false;
+                isPanning = false;
+                touchMoved = false;
+                
+                // Re-enable OrbitControls
+                controls.enabled = true;
+                controls.enableRotate = true;
+                controls.enablePan = isMobile; // Keep pan enabled on mobile
+                
+                // Reset touch start distance
+                touchStartDistance = 0;
+            } else if (event.touches.length === 1) {
+                // If one finger remains, update start position for single touch
+                const touch = event.touches[0];
+                touchStartX = touch.clientX;
+                touchStartY = touch.clientY;
+                touchMoved = false;
+            }
+        }
+
+        function handleTouchClick(touch) {
+            // Convert touch to normalized device coordinates
+            mouse.x = (touch.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(touch.clientY / window.innerHeight) * 2 + 1;
+
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects(Object.values(linkMeshes));
+
+            if (intersects.length > 0) {
+                const mesh = intersects[0].object;
+                if (mesh.userData.motorData) {
+                    // Clear hover effect if we had one
+                    if (hoveredMesh && hoveredMesh !== mesh) {
+                        const motorData = hoveredMesh.userData.motorData;
+                        if (motorData) {
+                            const temp = motorData.avg;
+                            const color = getTemperatureColor(temp);
+                            hoveredMesh.material.emissive = color;
+                            hoveredMesh.material.emissiveIntensity = 0.2 + (temp / 120) * 0.3;
+                        }
+                    }
+                    hoveredMesh = null;
+                    
+                    highlightMesh(mesh);
+                    showMotorInfo(mesh.userData.motorData);
+                    
+                    // Prevent default to avoid any other interactions
+                    event.preventDefault();
+                }
+            } else {
+                // Clicked on empty space - clear selection and hide panel
+                clearSelection();
+                hideMotorInfoPanel();
+            }
+        }
+
         function onWindowResize() {
             camera.aspect = window.innerWidth / window.innerHeight;
             camera.updateProjectionMatrix();
             renderer.setSize(window.innerWidth, window.innerHeight);
+            
+            // Adjust pixel ratio on resize
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, isMobile ? 1 : 2));
         }
 
         // Build robot from URDF
@@ -664,7 +1335,7 @@
                 const link = links[linkName];
                 if (!link.visual) continue;
 
-                const meshPath = link.visual.replace('package://h1_description/meshes/', '/assets/h1/meshes/') + '?v=' + Date.now();
+                const meshPath = link.visual.replace('package://h1_description/meshes/', '/assets/h1/meshes/');
 
                 try {
                     const geometry = await new Promise((resolve, reject) => {
@@ -682,17 +1353,22 @@
                         }
                     }
 
+                    // Simplify geometry for mobile devices
+                    if (isMobile) {
+                        geometry.computeVertexNormals();
+                    }
+
                     const material = new THREE.MeshPhongMaterial({
                         color: 0x888888,
-                        specular: 0x111111,
-                        shininess: 30,
+                        specular: isMobile ? 0x222222 : 0x111111,
+                        shininess: isMobile ? 10 : 30,
                         emissive: 0x000000,
                         emissiveIntensity: 0.3
                     });
 
                     const mesh = new THREE.Mesh(geometry, material);
-                    mesh.castShadow = true;
-                    mesh.receiveShadow = true;
+                    mesh.castShadow = !isMobile;
+                    mesh.receiveShadow = !isMobile;
                     mesh.name = linkName;
 
                     meshCache[linkName] = mesh;
@@ -838,7 +1514,7 @@
             }
         }
 
-        // Update motor temperatures
+        // Update motor temperatures and refresh motor info panel if open
         function updateMotorTemperatures(data) {
             if (!data.temperatures || data.temperatures.length === 0) return;
 
@@ -880,6 +1556,14 @@
             });
 
             motorData = data;
+            
+            // Refresh motor info panel if it's open and the selected motor has new data
+            if (selectedMotorId && document.getElementById('motorInfoPanel').classList.contains('visible')) {
+                const selectedMotor = temps.find(m => m.motor_id === selectedMotorId);
+                if (selectedMotor) {
+                    updateMotorInfoPanel(selectedMotor);
+                }
+            }
         }
 
         // Handle mesh clicks
@@ -898,6 +1582,7 @@
                     selectedMesh.material.emissiveIntensity = 0.2 + (temp / 120) * 0.3;
                 }
                 selectedMesh = null;
+                selectedMotorId = null;
             }
         }
 
@@ -921,10 +1606,20 @@
                 selectedMesh.material.color = lighterColor;
                 selectedMesh.material.emissive = lighterColor;
                 selectedMesh.material.emissiveIntensity = 0.7;
+                
+                selectedMotorId = motorData.motor_id;
             }
         }
 
         function onMouseClick(event) {
+            // Skip if we're on mobile (handled by touch events)
+            if (isMobile) return;
+            
+            // Check if click is on a UI panel (not canvas)
+            if (event.target.closest('.header, .stats-panel, .controls-panel, .temp-legend, .motor-info-panel, .show-panel-btn')) {
+                return;
+            }
+            
             mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
             mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
 
@@ -952,12 +1647,19 @@
             } else {
                 // Clicked on empty space - clear selection and hide panel
                 clearSelection();
-                document.getElementById('motorInfoPanel').classList.remove('visible');
+                hideMotorInfoPanel();
             }
         }
 
         function showMotorInfo(motor) {
             const panel = document.getElementById('motorInfoPanel');
+            panelsVisible.motorInfo = true;
+            panel.classList.add('visible');
+            panel.classList.remove('collapsed');
+            updateMotorInfoPanel(motor);
+        }
+
+        function updateMotorInfoPanel(motor) {
             const title = document.getElementById('motorInfoTitle');
             const content = document.getElementById('motorInfoContent');
 
@@ -1029,8 +1731,12 @@
                     <span class="detail-value" style="font-size: 0.8em;">${motor.mesh_name}</span>
                 </div>
             `;
+        }
 
-            panel.classList.add('visible');
+        function hideMotorInfoPanel() {
+            const panel = document.getElementById('motorInfoPanel');
+            panelsVisible.motorInfo = false;
+            panel.classList.remove('visible');
         }
 
         window.addEventListener('click', onMouseClick, false);
@@ -1052,12 +1758,111 @@
             }
             
             clearSelection();
-            document.getElementById('motorInfoPanel').classList.remove('visible');
+            hideMotorInfoPanel();
         });
 
-        // Add hover effect for meshes
+        // Panel close buttons
+        document.getElementById('closeStatsPanel').addEventListener('click', function() {
+            togglePanel('stats');
+        });
+        
+        document.getElementById('closeControlsPanel').addEventListener('click', function() {
+            togglePanel('controls');
+        });
+        
+        document.getElementById('closeTempLegend').addEventListener('click', function() {
+            togglePanel('legend');
+        });
+        
+        // Show panel buttons
+        document.getElementById('showHeaderBtn').addEventListener('click', function() {
+            togglePanel('header');
+        });
+        
+        document.getElementById('showStatsBtn').addEventListener('click', function() {
+            togglePanel('stats');
+        });
+        
+        document.getElementById('showControlsBtn').addEventListener('click', function() {
+            togglePanel('controls');
+        });
+        
+        document.getElementById('showLegendBtn').addEventListener('click', function() {
+            togglePanel('legend');
+        });
+        
+        // Toggle all panels button
+        document.getElementById('toggleAllPanelsBtn').addEventListener('click', function() {
+            const allVisible = panelsVisible.header && panelsVisible.stats && 
+                               panelsVisible.controls && panelsVisible.legend;
+            
+            // Toggle all panels to the opposite state
+            const newState = !allVisible;
+            
+            panelsVisible.header = newState;
+            panelsVisible.stats = newState;
+            panelsVisible.controls = newState;
+            panelsVisible.legend = newState;
+            
+            updatePanelVisibility();
+            
+            this.textContent = newState ? 'Hide All Panels' : 'Show All Panels';
+        });
+
+        function togglePanel(panelName) {
+            panelsVisible[panelName] = !panelsVisible[panelName];
+            updatePanelVisibility();
+        }
+
+        function updatePanelVisibility() {
+            const header = document.querySelector('.header');
+            const statsPanel = document.querySelector('.stats-panel');
+            const controlsPanel = document.querySelector('.controls-panel');
+            const tempLegend = document.querySelector('.temp-legend');
+            const toggleAllBtn = document.getElementById('toggleAllPanelsBtn');
+            
+            // Update main panels
+            if (panelsVisible.header) {
+                header.classList.remove('collapsed');
+            } else {
+                header.classList.add('collapsed');
+            }
+            
+            if (panelsVisible.stats) {
+                statsPanel.classList.remove('collapsed');
+            } else {
+                statsPanel.classList.add('collapsed');
+            }
+            
+            if (panelsVisible.controls) {
+                controlsPanel.classList.remove('collapsed');
+            } else {
+                controlsPanel.classList.add('collapsed');
+            }
+            
+            if (panelsVisible.legend) {
+                tempLegend.classList.remove('collapsed');
+            } else {
+                tempLegend.classList.add('collapsed');
+            }
+            
+            // Update "show panel" buttons visibility
+            document.getElementById('showHeaderBtn').classList.toggle('visible', !panelsVisible.header);
+            document.getElementById('showStatsBtn').classList.toggle('visible', !panelsVisible.stats);
+            document.getElementById('showControlsBtn').classList.toggle('visible', !panelsVisible.controls);
+            document.getElementById('showLegendBtn').classList.toggle('visible', !panelsVisible.legend);
+            
+            // Update "Toggle All" button text
+            const allVisible = panelsVisible.header && panelsVisible.stats && 
+                               panelsVisible.controls && panelsVisible.legend;
+            toggleAllBtn.textContent = allVisible ? 'Hide All Panels' : 'Show All Panels';
+        }
+
+        // Add hover effect for meshes (only on desktop)
         let hoveredMesh = null;
         function onMouseMove(event) {
+            if (isMobile) return; // Skip hover on mobile
+            
             mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
             mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
 
@@ -1111,7 +1916,9 @@
             }
         }
 
-        window.addEventListener('mousemove', onMouseMove, false);
+        if (!isMobile) {
+            window.addEventListener('mousemove', onMouseMove, false);
+        }
 
         // Control buttons
         document.getElementById('autoRotateBtn').addEventListener('click', function () {
@@ -1138,8 +1945,8 @@
         });
 
         document.getElementById('resetViewBtn').addEventListener('click', function () {
-            camera.position.set(0, 0.5, 2.5);  // Reset to H1-adjusted position
-            controls.target.set(0, 0.8, 0);  // Reset to H1 center
+            camera.position.set(0, 1.5, 3.5);  // Reset to H1-adjusted position
+            controls.target.set(0, 0.8, 0); // Reset to H1 center
             controls.update();
         });
 
