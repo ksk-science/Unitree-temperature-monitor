@@ -1,0 +1,733 @@
+<!DOCTYPE html>
+<html lang="ru">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Трансляция окон приложений</title>
+    <link href="/assets/css/css_fonts.css" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: linear-gradient(135deg, #0f0c29 0%, #302b63 50%, #24243e 100%);
+            color: #ffffff;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        /* Container */
+        .container {
+            max-width: 2400px;
+            margin: 0 auto;
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 30px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+        }
+
+        /* Header */
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .header h1 {
+            font-size: 2.2em;
+            font-weight: 700;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .client-info {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 15px;
+            padding: 15px 25px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            display: flex;
+            align-items: center;
+            gap: 20px;
+        }
+
+        .client-info strong {
+            color: #667eea;
+            font-weight: 600;
+        }
+
+        /* Status Panel */
+        .status-panel {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 15px;
+            padding: 20px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            margin-bottom: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .status-item {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .status-label {
+            color: rgba(255, 255, 255, 0.7);
+            font-size: 0.9em;
+        }
+
+        .status-value {
+            font-weight: 600;
+            font-size: 1.3em;
+        }
+
+        .status-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #10b981;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.5;
+            }
+        }
+
+        /* Video Grid */
+        .video-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(500px, 1fr));
+            gap: 25px;
+            margin-bottom: 30px;
+        }
+
+        .video-box {
+            background: rgba(255, 255, 255, 0.08);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 20px;
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            transition: all 0.3s ease;
+        }
+
+        .video-box:hover {
+            background: rgba(255, 255, 255, 0.12);
+            transform: translateY(-5px);
+            box-shadow: 0 15px 30px rgba(0, 0, 0, 0.4);
+        }
+
+        .video-box.tiled {
+            grid-column: 1 / -1;
+        }
+
+        .video-title {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            padding-bottom: 15px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .video-title span {
+            font-size: 1.3em;
+            font-weight: 600;
+            color: #667eea;
+        }
+
+        /* Controls Panel */
+        .controls-panel {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 25px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            margin-top: 30px;
+        }
+
+        .controls-panel h2 {
+            font-size: 1.4em;
+            margin-bottom: 20px;
+            font-weight: 600;
+            color: #667eea;
+            text-align: center;
+        }
+
+        .controls-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 12px;
+        }
+
+        .control-btn {
+            padding: 14px 20px;
+            background: rgba(102, 126, 234, 0.25);
+            border: 1px solid rgba(102, 126, 234, 0.4);
+            border-radius: 12px;
+            color: white;
+            font-size: 1em;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            text-align: center;
+        }
+
+        .control-btn:hover {
+            background: rgba(102, 126, 234, 0.4);
+            transform: translateY(-3px);
+            box-shadow: 0 8px 20px rgba(102, 126, 234, 0.3);
+        }
+
+        .control-btn.screenshot {
+            background: rgba(59, 130, 246, 0.25);
+            border-color: rgba(59, 130, 246, 0.4);
+        }
+
+        .control-btn.screenshot:hover {
+            background: rgba(59, 130, 246, 0.4);
+            box-shadow: 0 8px 20px rgba(59, 130, 246, 0.3);
+        }
+
+        /* Status Box */
+        .status-box {
+            background: rgba(255, 255, 255, 0.08);
+            backdrop-filter: blur(10px);
+            border-radius: 12px;
+            padding: 12px 20px;
+            margin: 10px 0;
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 0.95em;
+        }
+
+        .status-box.connected {
+            background: rgba(16, 185, 129, 0.15);
+            border-color: rgba(16, 185, 129, 0.3);
+        }
+
+        /* Video Images */
+        .video-container img {
+            width: 100%;
+            border-radius: 15px;
+            border: 2px solid rgba(255, 255, 255, 0.2);
+            transition: border-color 0.3s ease;
+        }
+
+        .video-container img:hover {
+            border-color: rgba(102, 126, 234, 0.5);
+        }
+
+        /* Stats Display */
+        .stats-display {
+            display: flex;
+            gap: 15px;
+            margin: 20px 0;
+            flex-wrap: wrap;
+        }
+
+        .stat-card {
+            background: rgba(255, 255, 255, 0.08);
+            backdrop-filter: blur(10px);
+            border-radius: 15px;
+            padding: 15px 20px;
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            min-width: 150px;
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 1.8em;
+            font-weight: 700;
+            color: #667eea;
+            margin-bottom: 5px;
+        }
+
+        .stat-label {
+            color: rgba(255, 255, 255, 0.7);
+            font-size: 0.9em;
+        }
+
+        /* Fullscreen Modal */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 9999;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.95);
+            justify-content: center;
+            align-items: center;
+            cursor: pointer;
+        }
+
+        .modal-content {
+            max-width: 95%;
+            max-height: 95%;
+            object-fit: contain;
+            border-radius: 10px;
+            box-shadow: 0 0 40px rgba(102, 126, 234, 0.5);
+            cursor: default;
+        }
+
+        .modal-content.video {
+            background: #000;
+        }
+
+        .close-modal {
+            position: absolute;
+            top: 20px;
+            right: 30px;
+            color: #fff;
+            font-size: 40px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: color 0.3s;
+            z-index: 10000;
+        }
+
+        .close-modal:hover {
+            color: #667eea;
+        }
+
+        .modal-info {
+            position: absolute;
+            bottom: 20px;
+            left: 0;
+            width: 100%;
+            text-align: center;
+            color: rgba(255, 255, 255, 0.7);
+            font-size: 14px;
+            padding: 10px;
+        }
+
+        /* Responsive */
+        @media (max-width: 1200px) {
+            .video-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .controls-grid {
+                grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            }
+        }
+
+        @media (max-width: 768px) {
+            .header {
+                flex-direction: column;
+                gap: 20px;
+                text-align: center;
+            }
+            
+            .client-info {
+                flex-direction: column;
+                gap: 10px;
+            }
+            
+            .controls-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <h1>🎥 Трансляция окон приложений</h1>
+            <div class="client-info">
+                <div class="status-item">
+                    <span class="status-label">Клиент ID</span>
+                    <strong>{{ client_id }}</strong>
+                </div>
+                <div class="status-indicator"></div>
+                <div class="status-item">
+                    <span class="status-label">Активных клиентов</span>
+                    <span class="status-value" id="clientCount">0</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Stats Display -->
+        <div class="stats-display">
+            <div class="stat-card">
+                <div class="stat-value" id="activeWindows">0</div>
+                <div class="stat-label">Активных окон</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="totalFrames">0</div>
+                <div class="stat-label">Всего кадров</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="updateRate">0 FPS</div>
+                <div class="stat-label">Скорость обновления</div>
+            </div>
+        </div>
+
+        <!-- Main Video Container -->
+        <div class="video-box tiled">
+            <div class="video-title">
+                <span>📺 Плиточный вид (все окна)</span>
+                <button class="control-btn screenshot" onclick="captureScreenshot('tiled')">
+                    📸 Скриншот
+                </button>
+            </div>
+            <div class="status-box connected" id="statusTiled">
+                <div class="status-indicator"></div>
+                <span>Подключение установлено</span>
+            </div>
+            <div class="video-container">
+                <img src="/visual/video_feed_tiled" id="videoTiled" alt="Плиточный вид" />
+            </div>
+        </div>
+
+        <!-- Individual Windows Container -->
+        <div id="windowsContainer" class="video-grid"></div>
+
+        <!-- Controls Panel -->
+        <div class="controls-panel">
+            <h2>🎮 Управление трансляцией</h2>
+            <div class="controls-grid">
+                <button class="control-btn" onclick="location.reload()">
+                    🔄 Обновить страницу
+                </button>
+                <button class="control-btn" onclick="updateStats()">
+                    📊 Обновить статистику
+                </button>
+                <button class="control-btn screenshot" onclick="captureAllScreenshots()">
+                    📸 Скриншоты всех окон
+                </button>
+                <button class="control-btn" onclick="forceRedraw()">
+                    🎨 Принудительная перерисовка
+                </button>
+                <button class="control-btn" onclick="placeWindows()">
+                    🪟 Разместить окна по половинам
+                </button>
+                <button class="control-btn" onclick="placeWindowLeft()">
+                    ⬅️ Окно слева
+                </button>
+                <button class="control-btn" onclick="placeWindowRight()">
+                    ➡️ Окно справа
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Модальное окно полноэкранного просмотра -->
+    <div id="fullscreenModal" class="modal">
+        <span class="close-modal">&times;</span>
+        <div id="modalContentContainer">
+            <img id="fullscreenImage" class="modal-content" src="" alt="Полноэкранное изображение" />
+            <div class="modal-info">Нажмите на изображение или клавишу ESC для выхода</div>
+        </div>
+    </div>
+
+    <script>
+        let windowsCount = 0;
+        let frameCount = 0;
+        let lastUpdate = Date.now();
+        
+        function updateStats() {
+            fetch('/visual/client_stats')
+                .then(r => r.json())
+                .then(data => {
+                    document.getElementById('clientCount').textContent = data.active_clients;
+                    // Update FPS calculation
+                    const now = Date.now();
+                    const elapsed = (now - lastUpdate) / 1000;
+                    if (elapsed > 0) {
+                        const fps = Math.round(frameCount / elapsed);
+                        document.getElementById('updateRate').textContent = `${fps} FPS`;
+                    }
+                    lastUpdate = now;
+                    frameCount = 0;
+                });
+        }
+        
+        // function setupVideo(imgId, statusId, url, isTiled = false) {
+        //     const img = document.getElementById(imgId);
+        //     const status = document.getElementById(statusId);
+            
+        //     img.onload = function() {
+        //         status.innerHTML = '<div class="status-indicator"></div><span>✅ Подключено</span>';
+        //         status.classList.add('connected');
+        //         frameCount++;
+                
+        //         if (isTiled) {
+        //             updateWindowCount();
+        //         }
+        //     };
+            
+        //     img.onerror = function() {
+        //         status.innerHTML = '<div class="status-indicator" style="background: #ef4444;"></div><span>🔄 Переподключение...</span>';
+        //         status.classList.remove('connected');
+        //         setTimeout(() => { 
+        //             img.src = url + '?t=' + Date.now(); 
+        //         }, 1000);
+        //     };
+            
+        //     // Auto-refresh image every 2 seconds
+        //     // setInterval(() => {
+        //     //     if (!img.src.includes('?')) {
+        //     //         img.src = url + '?t=' + Date.now();
+        //     //     } else {
+        //     //         img.src = url + '&t=' + Date.now();
+        //     //     }
+        //     // }, 2000);
+        // }
+        function setupVideo(imgId, statusId, url, isTiled = false) {
+            const img = document.getElementById(imgId);
+            const status = document.getElementById(statusId);
+            
+            img.onload = function() {
+                status.innerHTML = '<div class="status-indicator"></div><span>✅ Подключено</span>';
+                status.classList.add('connected');
+                frameCount++;
+                
+                // Если это изображение сейчас в модальном окне, обновляем и там
+                if (modal.style.display === 'flex' && fullscreenImage.src === url) {
+                    fullscreenImage.src = url + (url.includes('?') ? '&' : '?') + 't=' + Date.now();
+                }
+                
+                if (isTiled) {
+                    updateWindowCount();
+                }
+            };
+            
+            img.onerror = function() {
+                status.innerHTML = '<div class="status-indicator" style="background: #ef4444;"></div><span>🔄 Переподключение...</span>';
+                status.classList.remove('connected');
+                setTimeout(() => { 
+                    img.src = url + '?t=' + Date.now(); 
+                }, 1000);
+            };
+        }
+        
+        function updateWindowCount() {
+            fetch('/visual/windows_count')
+                .then(r => r.json())
+                .then(data => {
+                    if (data.count !== windowsCount) {
+                        windowsCount = data.count;
+                        document.getElementById('activeWindows').textContent = windowsCount;
+                        createWindowElements();
+                    }
+                });
+        }
+        
+        function createWindowElements() {
+            const container = document.getElementById('windowsContainer');
+            container.innerHTML = '';
+            
+            for (let i = 0; i < windowsCount; i++) {
+                const windowBox = document.createElement('div');
+                windowBox.className = 'video-box';
+                windowBox.innerHTML = `
+                    <div class="video-title">
+                        <span>🖼️ Окно ${i+1}</span>
+                        <button class="control-btn screenshot" onclick="captureScreenshot('window', ${i})">
+                            📸 Скриншот
+                        </button>
+                    </div>
+                    <div class="status-box" id="statusWindow${i}">
+                        <div class="status-indicator"></div>
+                        <span>Подключение...</span>
+                    </div>
+                    <div class="video-container">
+                        <img src="/visual/video_feed_window/${i}" id="videoWindow${i}" alt="Окно ${i+1}" />
+                    </div>
+                `;
+                container.appendChild(windowBox);
+                
+                setTimeout(() => {
+                    setupVideo(`videoWindow${i}`, `statusWindow${i}`, `/visual/video_feed_window/${i}`);
+                }, 100);
+            }
+        }
+        
+        function captureScreenshot(type, index = null) {
+            let url = '';
+            let filename = '';
+            
+            if (type === 'tiled') {
+                url = '/visual/screenshot_tiled';
+                filename = 'screenshot_tiled.jpg';
+            } else if (type === 'window' && index !== null) {
+                url = `/visual/screenshot_window/${index}`;
+                filename = `screenshot_window_${index+1}.jpg`;
+            }
+            
+            if (url) {
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = filename;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+            }
+        }
+        
+        function captureAllScreenshots() {
+            captureScreenshot('tiled');
+            for (let i = 0; i < windowsCount; i++) {
+                setTimeout(() => { captureScreenshot('window', i); }, i * 500);
+            }
+        }
+        
+        function forceRedraw() {
+            fetch('/visual/force_redraw_all')
+                .then(r => r.text())
+                .then(data => {
+                    alert('Перерисовка выполнена успешно!');
+                    location.reload();
+                })
+                .catch(() => {
+                    alert('Ошибка при перерисовке');
+                });
+        }
+        
+        function placeWindows() {
+            fetch('/visual/place_windows')
+                .then(r => r.text())
+                .then(data => {
+                    alert('Окна успешно размещены!');
+                    location.reload();
+                })
+                .catch(() => {
+                    alert('Ошибка при размещении окон');
+                });
+        }
+        
+        function placeWindowLeft() {
+            const windowId = prompt('Введите ID окна (например, 0x12345678):');
+            if (windowId) {
+                fetch(`/visual/place_window/${{windowId}}/left`)
+                    .then(r => r.text())
+                    .then(data => {
+                        alert(data);
+                        location.reload();
+                    })
+                    .catch(() => {
+                        alert('Ошибка при размещении окна');
+                    });
+            }
+        }
+
+        function placeWindowRight() {
+            const windowId = prompt('Введите ID окна (например, 0x12345678):');
+            if (windowId) {
+                fetch(`/visual/place_window/${windowId}/right`)
+                    .then(r => r.text())
+                    .then(data => {
+                        alert(data);
+                        location.reload();
+                    })
+                    .catch(() => {
+                        alert('Ошибка при размещении окна');
+                    });
+            }
+        }
+
+        // Модальное окно для полноэкранного просмотра
+        const modal = document.getElementById('fullscreenModal');
+        const fullscreenImage = document.getElementById('fullscreenImage');
+        const modalInfo = document.querySelector('.modal-info');
+
+        // Открытие модального окна при клике на изображение
+        document.addEventListener('click', function(e) {
+            if (e.target.matches('.video-container img')) {
+                openFullscreen(e.target);
+            }
+        });
+
+        function openFullscreen(imgElement) {
+            const src = imgElement.src;
+            const alt = imgElement.alt;
+            
+            // Обновляем источник изображения
+            fullscreenImage.src = src;
+            fullscreenImage.alt = alt;
+            
+            // Обновляем информацию в модальном окне
+            modalInfo.textContent = alt + ' • Нажмите на изображение или клавишу ESC для выхода';
+            
+            // Показываем модальное окно
+            modal.style.display = 'flex';
+            document.body.style.overflow = 'hidden'; // Блокируем скролл
+            
+            // Определяем, это изображение или видео
+            if (src.includes('/visual/video_feed')) {
+                fullscreenImage.classList.add('video');
+            } else {
+                fullscreenImage.classList.remove('video');
+            }
+        }
+
+        // Закрытие модального окна
+        function closeFullscreen() {
+            modal.style.display = 'none';
+            document.body.style.overflow = ''; // Восстанавливаем скролл
+        }
+
+        // Обработчики закрытия
+        modal.addEventListener('click', function(e) {
+            if (e.target === modal || e.target.classList.contains('close-modal')) {
+                closeFullscreen();
+            }
+        });
+
+        // Закрытие по клавише ESC
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape' && modal.style.display === 'flex') {
+                closeFullscreen();
+            }
+        });
+
+        // Предотвращаем закрытие при клике на само изображение
+        fullscreenImage.addEventListener('click', function(e) {
+            e.stopPropagation();
+        });
+
+
+        window.onload = function() {
+            setupVideo('videoTiled', 'statusTiled', '/visual/video_feed_tiled', true);
+            updateStats();
+            setInterval(updateStats, 5000);
+            setInterval(updateWindowCount, 3000);
+        };
+    </script>
+</body>
+</html>

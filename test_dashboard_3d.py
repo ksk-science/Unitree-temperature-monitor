@@ -15,13 +15,16 @@ from flask_socketio import SocketIO
 
 from config_g1 import MOTOR_NAMES, MOTOR_TO_MESH, URDF_FILENAME, URDF_PATH, DEFAULT_PORT, DEFAULT_HOST
 
+from visual import init_visual
+
 app = Flask(__name__)
 # Use environment variable for secret key, fallback to random key for security
 app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY', secrets.token_hex(16))
 socketio = SocketIO(app, cors_allowed_origins="*")
 
-# Motor mappings imported from config.py
+init_visual(app)
 
+# Motor mappings imported from config.py
 motor_data = {'temperatures': [], 'timestamp': 0}
 
 def generate_simulated_data():
