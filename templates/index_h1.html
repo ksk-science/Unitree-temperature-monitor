@@ -48,7 +48,7 @@
 
     <!-- Stats Panel -->
     <div class="stats-panel">
-        <h2>📊 Statistics <button class="panel-close-btn" id="closeStatsPanel" title="Close">×</button></h2>
+        <h2>📊 Statistics <button class="panel-close-btn" id="closeStatsPanel" title="Close">✕</button></h2>
         <div class="stat-item">
             <span class="stat-label">Total Motors</span>
             <span class="stat-value" id="totalMotors">0</span>
@@ -73,7 +73,7 @@
 
     <!-- Controls Panel -->
     <div class="controls-panel-3d">
-        <h2>🎮 Controls <button class="panel-close-btn" id="closeControlsPanel" title="Close">×</button></h2>
+        <h2>🎮 Controls <button class="panel-close-btn" id="closeControlsPanel" title="Close">✕</button></h2>
         <button class="control-btn-3d" id="autoRotateBtn">Auto Rotate: OFF</button>
         <button class="control-btn-3d active" id="showPositionsBtn">Show Positions: ON</button>
         <button class="control-btn-3d" id="resetViewBtn">Reset Camera</button>
@@ -82,7 +82,7 @@
 
     <!-- Temperature Legend -->
     <div class="temp-legend">
-        <h3>🌡️ Temperature Scale <button class="panel-close-btn" id="closeTempLegend" title="Close">×</button></h3>
+        <h3>🌡️ Temperature Scale <button class="panel-close-btn" id="closeTempLegend" title="Close">✕</button></h3>
         <div class="gradient-bar"></div>
         <div class="gradient-labels">
             <span>30°C</span>
@@ -95,7 +95,7 @@
     <div class="motor-info-panel" id="motorInfoPanel">
         <h3 id="motorInfoTitle">
             <span>Motor Information</span>
-            <button class="close-btn" id="closePanelBtn" title="Close">×</button>
+            <button class="close-btn" id="closePanelBtn" title="Close">✕</button>
         </h3>
         <div id="motorInfoContent"></div>
     </div>
@@ -889,7 +889,7 @@
             if (isMobile) return;
             
             // Check if click is on a UI panel (not canvas)
-            if (event.target.closest('.header, .stats-panel, .controls-panel, .temp-legend, .motor-info-panel, .show-panel-btn')) {
+            if (event.target.closest('.header-3d, .stats-panel, .controls-panel-3d, .temp-legend, .motor-info-panel, .show-panel-btn')) {
                 return;
             }
             
@@ -1088,9 +1088,9 @@
         }
 
         function updatePanelVisibility() {
-            const header = document.querySelector('.header');
+            const header = document.querySelector('.header-3d');
             const statsPanel = document.querySelector('.stats-panel');
-            const controlsPanel = document.querySelector('.controls-panel');
+            const controlsPanel = document.querySelector('.controls-panel-3d');
             const tempLegend = document.querySelector('.temp-legend');
             const toggleAllBtn = document.getElementById('toggleAllPanelsBtn');
             
