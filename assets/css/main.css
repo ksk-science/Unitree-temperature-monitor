@@ -58,6 +58,13 @@ canvas {
     pointer-events: none;
 }
 
+.header-button{
+    display: block;
+    width: fit-content !important;
+    margin-right: auto;
+    margin-left: 20px;
+}
+
 .header-controls {
     display: flex;
     gap: 10px;
