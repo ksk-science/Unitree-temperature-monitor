@@ -14,7 +14,7 @@
         <!-- Header -->
         <div class="header-stream">
             <h1>🎥 Application window streaming</h1>
-        <button class="header-button control-btn-3d" onclick="window.location.href='/';">Main View</button>
+            <button class="header-button control-btn-3d" onclick="window.location.href='/';">Main View</button>
             <div class="client-info">
                 <div class="status-item-stream">
                     <span class="status-label-stream">User ID</span>
@@ -41,23 +41,6 @@
             <div class="stat-card">
                 <div class="stat-value-stream" id="updateRate">0 FPS</div>
                 <div class="stat-label-stream">Refresh rate</div>
-            </div>
-        </div>
-
-        <!-- Main Video Container -->
-        <div class="video-box tiled">
-            <div class="video-title">
-                <span>📺 Tiled view (all windows)</span>
-                <button class="control-btn-stream screenshot" onclick="captureScreenshot('tiled')">
-                    📸 Screenshot
-                </button>
-            </div>
-            <div class="status-box connected" id="statusTiled">
-                <div class="status-indicator connected"></div>
-                <span>Connection established</span>
-            </div>
-            <div class="video-container">
-                <img src="/visual/video_feed_tiled" id="videoTiled" alt="Tiled view" />
             </div>
         </div>
 
@@ -93,7 +76,6 @@
         </div>
     </div>
 
-
     <div id="fullscreenModal" class="modal">
         <span class="close-modal">&times;</span>
         <div id="modalContentContainer">
@@ -124,7 +106,7 @@
                 });
         }
         
-        function setupVideo(imgId, statusId, url, isTiled = false) {
+        function setupVideo(imgId, statusId, url) {
             const img = document.getElementById(imgId);
             const status = document.getElementById(statusId);
             
@@ -135,10 +117,6 @@
                 
                 if (modal.style.display === 'flex' && fullscreenImage.src === url) {
                     fullscreenImage.src = url + (url.includes('?') ? '&' : '?') + 't=' + Date.now();
-                }
-                
-                if (isTiled) {
-                    updateWindowCount();
                 }
             };
             
@@ -197,10 +175,7 @@
             let url = '';
             let filename = '';
             
-            if (type === 'tiled') {
-                url = '/visual/screenshot_tiled';
-                filename = 'screenshot_tiled.jpg';
-            } else if (type === 'window' && index !== null) {
+            if (type === 'window' && index !== null) {
                 url = `/visual/screenshot_window/${index}`;
                 filename = `screenshot_window_${index+1}.jpg`;
             }
@@ -216,7 +191,6 @@
         }
         
         function captureAllScreenshots() {
-            captureScreenshot('tiled');
             for (let i = 0; i < windowsCount; i++) {
                 setTimeout(() => { captureScreenshot('window', i); }, i * 500);
             }
@@ -291,17 +265,13 @@
             const src = imgElement.src;
             const alt = imgElement.alt;
             
-            
             fullscreenImage.src = src;
             fullscreenImage.alt = alt;
             
-            
             modalInfo.textContent = alt + ' • Click on the image or press the ESC key to exit';
-            
             
             modal.style.display = 'flex';
             document.body.style.overflow = 'hidden'; 
-            
             
             if (src.includes('/visual/video_feed')) {
                 fullscreenImage.classList.add('video');
@@ -310,34 +280,28 @@
             }
         }
 
-
         function closeFullscreen() {
             modal.style.display = 'none';
             document.body.style.overflow = '';
         }
-
         
         modal.addEventListener('click', function(e) {
             if (e.target === modal || e.target.classList.contains('close-modal')) {
                 closeFullscreen();
             }
         });
-
         
         document.addEventListener('keydown', function(e) {
             if (e.key === 'Escape' && modal.style.display === 'flex') {
                 closeFullscreen();
             }
         });
-
         
         fullscreenImage.addEventListener('click', function(e) {
             e.stopPropagation();
         });
 
-
         window.onload = function() {
-            setupVideo('videoTiled', 'statusTiled', '/visual/video_feed_tiled', true);
             updateStats();
             setInterval(updateStats, 5000);
             setInterval(updateWindowCount, 3000);

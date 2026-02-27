@@ -1,3 +1,6 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
 import os
 import time
 import subprocess
@@ -6,774 +9,90 @@ import signal
 import queue
 import secrets
 import tempfile
+import shlex
 import re
-from flask import Blueprint, render_template, Response, request, make_response, session
-import numpy as np
-import cv2
+import traceback
 from collections import defaultdict
 from datetime import datetime, timedelta
 
+import numpy as np
+import cv2
+from flask import Blueprint, render_template, Response, request, make_response, session
+from mss import mss
 
-print("Checking dependencies for the method of cutting off invisible parts...")
-required_utils = ['wmctrl', 'xdotool', 'import', 'xwininfo', 'xprop', 'scrot']
-missing_utils = []
+# ========== Конфигурация ==========
+CAPTURE_INTERVAL = 0.033           # 30 кадров в секунду
+WINDOW_INFO_CACHE_TIME = 2.0        # обновлять список окон раз в 2 секунды
+WINDOW_GEOMETRY_CACHE_TIME = 1.0    # обновлять геометрию окон раз в 1 секунду
+CLIENT_TIMEOUT = 10                  # таймаут неактивного клиента (сек)
+CLEANUP_INTERVAL = 5                 # интервал очистки неактивных клиентов (сек)
+MAX_WINDOWS = 10                      # максимум отслеживаемых окон
+JPEG_QUALITY = 85                     # качество JPEG (0-100)
 
-for util in required_utils:
-    try:
-        if util == 'import':
-            subprocess.run(["convert", "--version"], capture_output=True)
-        elif util == 'xprop':
-            subprocess.run(["xprop", "-version"], capture_output=True)
-        else:
-            subprocess.run([util, "--version"], capture_output=True)
-        print(f" {util}: available")
-    except:
-        missing_utils.append(util)
-        print(f" {util}: not found")
-
-if missing_utils:
-    print(f"\n Install the missing utilities:")
-    print(f"sudo apt install wmctrl x11-apps imagemagick x11-utils xdotool scrot")
-    print("Continued in 3 seconds...")
-    time.sleep(3)
-
-visual_bp = Blueprint('visual', __name__, url_prefix='/visual')
-
-
+# ========== Глобальные переменные ==========
 app_processes = []
-client_queues_individual = defaultdict(lambda: defaultdict(lambda: queue.Queue(maxsize=10)))
-client_queues_tiled = defaultdict(lambda: queue.Queue(maxsize=10))
+client_queues_individual = defaultdict(lambda: defaultdict(lambda: queue.Queue(maxsize=1)))
 client_last_activity = {}
 client_session_map = {}
 clients_lock = threading.Lock()
-CLEANUP_INTERVAL = 5
-CLIENT_TIMEOUT = 10
-max_windows = 10
 
-print("Starting a virtual display...")
+# Кэш информации об окнах (не изображений!)
+_window_info_cache = []
+_window_info_cache_time = 0
+
+# Кэш геометрии окон (координаты и размеры)
+_window_geometry_cache = {}
+_window_geometry_cache_time = 0
+
+broadcast_thread = None
+stop_broadcast = None
+
 original_display = os.environ.get('DISPLAY', ':0')
+os.environ['DISPLAY'] = ':99'        # будет переопределено после запуска Xvfb
 
-xvfb_process = subprocess.Popen(
-    ["Xvfb", ":99", "-screen", "0", "1920x1080x24"],
-    stdout=subprocess.PIPE,
-    stderr=subprocess.PIPE
-)
-time.sleep(2)
-os.environ['DISPLAY'] = ':99'
-print(f"Virtual display started: {os.environ['DISPLAY']}")
-subprocess.run(["xhost", "+"], capture_output=True)
-
+# Список приложений для запуска (можно изменить)
 apps = [
-    "gedit -s",
+    "gedit",
     "gnome-system-monitor",
+
+    # "/home/ksk/Apps/visualization.sh"
 ]
 
+windows_head_names = [
+    "Head Camera",
+    "display_point_cloud_ROS1.rviz*-RViz"
+]
 
-def force_window_redraw(window_id, app_name=None, display=':99'):
-    try:
+# ========== Вспомогательные функции ==========
+
+def check_dependencies():
+    """Проверка наличия необходимых утилит (некритично, но полезно)"""
+    required_utils = ['wmctrl', 'xdotool', 'xwininfo', 'xprop']
+    missing_utils = []
+    for util in required_utils:
         try:
-            prop_result = subprocess.run(
-                f"DISPLAY={display} xprop -id {window_id} WM_TRANSIENT_FOR",
-                shell=True, capture_output=True, text=True, timeout=2
-            )
-            if prop_result.returncode == 0 and 'WM_TRANSIENT_FOR' in prop_result.stdout:
-                for line in prop_result.stdout.split('\n'):
-                    if 'WM_TRANSIENT_FOR' in line:
-                        parts = line.split('=')
-                        if len(parts) > 1:
-                            parent_id = parts[1].strip().split()[0]
-                            if parent_id.startswith('0x'):
-                                print(f"  Subwindow {window_id}, redraw the parent {parent_id}")
-                                force_window_redraw(parent_id, app_name, display)
-                                return
+            subprocess.run([util, "--version"], capture_output=True)
+            print(f"  {util}: available")
         except:
-            pass
-        
-      
-        subprocess.run(
-            f"DISPLAY={display} xdotool windowfocus {window_id}",
-            shell=True, capture_output=True, timeout=2
-        )
-        time.sleep(0.05)
-        
-        
-        subprocess.run(
-            f"DISPLAY={display} xrefresh -id {window_id}",
-            shell=True, capture_output=True, timeout=2
-        )
-        time.sleep(0.05)
-        
-        
-        try:
-            geom_result = subprocess.run(
-                f"DISPLAY={display} xwininfo -id {window_id} | grep -E 'Width:|Height:'",
-                shell=True, capture_output=True, text=True, timeout=2
-            )
-            if geom_result.returncode == 0:
-                lines = geom_result.stdout.strip().split('\n')
-                width = height = 0
-                for line in lines:
-                    if 'Width:' in line:
-                        width = int(line.split(':')[1].strip())
-                    elif 'Height:' in line:
-                        height = int(line.split(':')[1].strip())
-                
-                if width > 0 and height > 0:
-                    subprocess.run(
-                        f"DISPLAY={display} wmctrl -i -r {window_id} -e 0,0,0,{width-1},{height-1}",
-                        shell=True, capture_output=True, timeout=2
-                    )
-                    time.sleep(0.05)
-                    subprocess.run(
-                        f"DISPLAY={display} wmctrl -i -r {window_id} -e 0,0,0,{width},{height}",
-                        shell=True, capture_output=True, timeout=2
-                    )
-                    time.sleep(0.05)
-        except:
-            pass
-        
-    except Exception as e:
-        print(f"Error while redrawing the window {window_id}: {e}")
-
-
-
-
-
-def place_window_on_half(window_id, half='left', display=':99'):
-    """
-    Places the window strictly on the specified half of the screen.
-    
-    Args:
-        window_id: ID window
-        half: 'left' of 'right'
-        display: DISPLAY for X-server
-    """
-    try:
-        
-        root_result = subprocess.run(
-            f"DISPLAY={display} xwininfo -root",
-            shell=True, capture_output=True, text=True, timeout=2
-        )
-        
-        screen_width = 1920
-        screen_height = 1080
-        
-        if root_result.returncode == 0:
-            for line in root_result.stdout.split('\n'):
-                if 'Width:' in line:
-                    screen_width = int(line.split(':')[1].strip())
-                elif 'Height:' in line:
-                    screen_height = int(line.split(':')[1].strip())
-        
-        print(f"   Screen size: {screen_width}x{screen_height}")
-        
-       
-        half_width = screen_width // 2
-        window_height = int(screen_height * 0.9)
-        window_y = (screen_height - window_height) // 2
-        
-        window_name = f"{half} side"
-        if half == 'left':
-            window_x = 0
-        else: window_x = half_width
-
-        
-        try:
-            geom_result = subprocess.run(
-                f"DISPLAY={display} xwininfo -id {window_id}",
-                shell=True, capture_output=True, text=True, timeout=2
-            )
-            
-            if geom_result.returncode == 0:
-                current_width = screen_width // 2
-                current_height = screen_height
-                for line in geom_result.stdout.split('\n'):
-                    if 'Width:' in line:
-                        current_width = int(line.split(':')[1].strip())
-                    elif 'Height:' in line:
-                        current_height = int(line.split(':')[1].strip())
-                
-                print(f"  Current window size: {current_width}x{current_height}")
-        except:
-            pass
-        
-        
-        cmd = f"DISPLAY={display} wmctrl -i -r {window_id} -e 0,{window_x},{window_y},{half_width},{window_height}"
-        print(f"  Setting the geometry: {cmd}")
-        
-        result = subprocess.run(
-            cmd,
-            shell=True, capture_output=True, text=True, timeout=3
-        )
-        
-        if result.returncode == 0:
-            print(f"  Window {window_id} posted on {window_name}")
-            
-            try:
-                subprocess.run(
-                    f"DISPLAY={display} wmctrl -i -r {window_id} -b add,maximized_vert",
-                    shell=True, capture_output=True, timeout=2
-                )
-            except:
-                pass
-            
-            return True
-        else:
-            print(f"  Window placement error: {result.stderr}")
-            return False
-            
-    except Exception as e:
-        print(f"   Error in place_window_on_half: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
-
-
-def place_all_windows_on_halves():
-    """Places all found windows on half of the screen."""
-    print("Placing windows on half of the screen...")
-    
-    windows = get_main_window_info()
-    
-    if not windows:
-        print("  No windows found, trying again in 3 seconds...")
+            missing_utils.append(util)
+            print(f"  {util}: not found")
+    if missing_utils:
+        print(f"\nУстановите недостающие утилиты:")
+        print(f"sudo apt install wmctrl xdotool x11-utils")
+        print("Продолжение через 3 секунды...")
         time.sleep(3)
-        windows = get_main_window_info()
-    
-    print(f"  Windows found: {len(windows)}")
-    
-    
-    placed_windows = 0
-    
-    for window in windows:
-        window_id = window.get('id')
-        app_name = window.get('app', 'unknown').lower()
-        
-        if not window_id:
-            continue
-        
-        
-        # half = 'right' if next((i for i, w in enumerate(windows) if w.get('app', 'unknown').lower() == app_name), -1) % 2 == 0 else 'left'  
-        
-        half = 'left' if placed_windows % 2 == 0 else 'right'
-        
-        print(f"  🪟 Window {window_id} ({app_name}) -> {half} half")
-        
-        
-        if place_window_on_half(window_id, half):
-            placed_windows += 1
-        
-        time.sleep(0.5)
-    
-    print(f"Posted windows: {placed_windows}/{len(windows)}")
-    return placed_windows
-
-
-def capture_child_window_safe(window_id, app_name=None, display=':99'):
-    """
-    Safe capture of child windows by redrawing the parent.
-    """
-    try:
-        parent_id = None
-        try:
-            prop_result = subprocess.run(
-                f"DISPLAY={display} xprop -id {window_id} WM_TRANSIENT_FOR",
-                shell=True, capture_output=True, text=True, timeout=2
-            )
-            if prop_result.returncode == 0 and 'WM_TRANSIENT_FOR' in prop_result.stdout:
-                for line in prop_result.stdout.split('\n'):
-                    if 'WM_TRANSIENT_FOR' in line:
-                        parts = line.split('=')
-                        if len(parts) > 1:
-                            parent_id = parts[1].strip().split()[0]
-        except:
-            pass
-        
-        if parent_id:
-            force_window_redraw(parent_id, app_name, display)
-            # time.sleep(0.1)
-        
-        temp_file = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
-        temp_path = temp_file.name
-        temp_file.close()
-        
-        result = subprocess.run(
-            f"DISPLAY={display} xwd -id {window_id} | convert xwd:- {temp_path}",
-            shell=True, capture_output=True, timeout=5
-        )
-        
-        if result.returncode == 0:
-            img = cv2.imread(temp_path)
-        else:
-            result = subprocess.run(
-                f"DISPLAY={display} import -window {window_id} -quality 100 {temp_path}",
-                shell=True, capture_output=True, timeout=5
-            )
-            img = cv2.imread(temp_path) if result.returncode == 0 else None
-        
-        try:
-            os.unlink(temp_path)
-        except:
-            pass
-        
-        return img
-        
-    except Exception as e:
-        print(f"Child window capture error {window_id}: {e}")
-        return None
-
-
-def capture_clean_window(window_id, app_name=None, display=':99', is_child=False):
-    """
-    Captures a clean image of the window.
-    Uses additional processing for child windows.
-    """
-    
-    try:
-        if not window_id.startswith('0x'):
-            try:
-                window_id = f"0x{int(window_id):08x}"
-            except ValueError:
-                print(f"Incorrect window ID: {window_id}")
-                return None
-        
-        if is_child:
-            return capture_child_window_safe(window_id, app_name, display)
-        
-        
-        try:
-            focused_result = subprocess.run(
-                f"DISPLAY={display} xdotool getwindowfocus",
-                shell=True, capture_output=True, text=True, timeout=2
-            )
-            original_focused = focused_result.stdout.strip()
-        except:
-            original_focused = None
-        
-        
-        try:
-            subprocess.run(
-                f"DISPLAY={display} wmctrl -i -r {window_id} -b add,above",
-                shell=True, capture_output=True, timeout=2
-            )
-        except Exception as e:
-            print(f"Failed to pop up window {window_id}: {e}")
-
-        try:
-            root_result = subprocess.run(
-                f"DISPLAY={display} xwininfo -root | grep 'Window id:'",
-                shell=True, capture_output=True, text=True, timeout=2
-            )
-            if root_result.returncode == 0:
-                root_line = root_result.stdout
-                root_match = re.search(r'0x[0-9a-f]+', root_line)
-                if root_match:
-                    root_id = root_match.group(0)
-                    subprocess.run(
-                        f"DISPLAY={display} xdotool windowfocus {root_id}",
-                        shell=True, capture_output=True, timeout=2
-                    )
-        except Exception as e:
-            print(f"Failed to remove focus: {e}")
-        
-       # time.sleep(0.2)
-        
-        img = None
-        temp_file = None
-        try:
-            temp_file = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
-            temp_path = temp_file.name
-            temp_file.close()
-            
-            capture_methods = [
-                # Method 1: import
-                lambda: subprocess.run(
-                    f"DISPLAY={display} import -window {window_id} -frame -quality 100 {temp_path}",
-                    shell=True, capture_output=True, timeout=5
-                ),
-                # Method 2: scrot
-                lambda: subprocess.run(
-                    f"DISPLAY={display} scrot --focused --border --silent {temp_path}",
-                    shell=True, capture_output=True, timeout=5
-                ),
-                # Method 3: xwd + convert
-                lambda: subprocess.run(
-                    f"DISPLAY={display} xwd -id {window_id} | convert xwd:- {temp_path}",
-                    shell=True, capture_output=True, timeout=5
-                )
-            ]
-            
-            for i, method in enumerate(capture_methods):
-                try:
-                    result = method()
-                    if result.returncode == 0:
-                        img = cv2.imread(temp_path)
-                        if img is not None and img.shape[0] > 10 and img.shape[1] > 10:
-                            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-                            if cv2.mean(gray)[0] > 10:
-                                break
-                            else:
-                                img = None
-                except:
-                    continue
-            
-            try:
-                os.unlink(temp_path)
-            except:
-                pass
-                
-        except Exception as e:
-            print(f"Image capture error: {e}")
-            if temp_file:
-                try:
-                    os.unlink(temp_file.name)
-                except:
-                    pass
-        
-        try:
-            subprocess.run(
-                f"DISPLAY={display} wmctrl -i -r {window_id} -b remove,above",
-                shell=True, capture_output=True, timeout=2
-            )
-        except:
-            pass
-        
-        if original_focused:
-            try:
-                subprocess.run(
-                    f"DISPLAY={display} xdotool windowfocus {original_focused}",
-                    shell=True, capture_output=True, timeout=2
-                )
-            except:
-                pass
-        
-        return img
-        
-    except Exception as e:
-        print(f"Critical error in capture_clean_window: {e}")
-        import traceback
-        traceback.print_exc()
-        return None
-
-def get_main_window_info(display=':99'):
-    """Gets info about the main app windows"""
-    windows = []
-    
-    try:
-        result = subprocess.run(
-            f"DISPLAY={display} wmctrl -l -p -x",
-            shell=True, capture_output=True, text=True, timeout=5
-        )
-        
-        if not result.stdout:
-            return windows
-        
-        lines = result.stdout.strip().split('\n')
-        
-        for line in lines:
-            
-            parts = line.split()
-            if len(parts) < 5:
-                continue
-            
-            window_id = parts[0]
-            pid = parts[2] if len(parts) > 2 else '0'
-            
-            try:
-                geom_result = subprocess.run(
-                    f"DISPLAY={display} xwininfo -id {window_id}",
-                    shell=True, capture_output=True, text=True, timeout=2
-                )
-                
-                if geom_result.returncode == 0:
-                    geom_lines = geom_result.stdout.split('\n')
-                    width = height = x = y = 0
-                    
-                    for geom_line in geom_lines:
-                        if 'Width:' in geom_line:
-                            width = int(geom_line.split(':')[1].strip())
-                        elif 'Height:' in geom_line:
-                            height = int(geom_line.split(':')[1].strip())
-                        elif 'Absolute upper-left X:' in geom_line:
-                            x = int(geom_line.split(':')[1].strip())
-                        elif 'Absolute upper-left Y:' in geom_line:
-                            y = int(geom_line.split(':')[1].strip())
-                    
-                    if width >= 100 and height >= 100:
-                        windows.append({
-                            'id': window_id,
-                            'app': parts[3],
-                            'width': width,
-                            'height': height,
-                            'x': x,
-                            'y': y,
-                            'pid': pid,
-                            'title': ' '.join(parts[4:]) if len(parts) > 4 else '',
-                            'is_main': True
-                        })
-            except Exception as e:
-                print(f"    Error getting window geometry {window_id}: {e}")
-                continue
-    
-    except Exception as e:
-        print(f"Error getting information about windows: {e}")
-        import traceback
-        traceback.print_exc()
-    
-    return windows
-
-
-
-def launch_applications():
-    print("Running apps on a virtual display...")
-    
-    try:
-        print("  Start the window manager (openbox)...")
-        env = os.environ.copy()
-        env['DISPLAY'] = ':99'
-        
-        wm_process = subprocess.Popen(
-            "openbox --sm-disable",
-            shell=True,
-            env=env,
-            start_new_session=True,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        app_processes.append(wm_process)
-        time.sleep(2)
-    except:
-        print("  Unable to start the window manager, continuing without it")
-    
-    for i, app_cmd in enumerate(apps):
-        try:
-            print(f"  Start: {app_cmd}")
-            env = os.environ.copy()
-            env['DISPLAY'] = ':99'
-            
-            
-            process = subprocess.Popen(
-                app_cmd,
-                shell=True,
-                env=env,
-                start_new_session=True,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-            
-            app_processes.append(process)
-            time.sleep(5)
-            
-            if process.poll() is None:
-                print(f"  The application has been started. (PID: {process.pid})")
-            else:
-                print(f"  The application has finished, code: {process.poll()}")
-                
-        except Exception as e:
-            print(f"  Error: {e}")
-    
-    print("\nPlacing windows on half of the screen...")
-    time.sleep(2)
-    
-    placed = place_all_windows_on_halves()
-    
-    if placed == 0:
-        print(" Unable to automatically arrange windows, retrying in 3 seconds...")
-        time.sleep(3)
-        place_all_windows_on_halves()
-    
-    
-    print("\nChecking users on a virtual display...")
-    try:
-        result = subprocess.run(
-            f"DISPLAY=:99 wmctrl -l",
-            shell=True, capture_output=True, text=True, timeout=5
-        )
-        print("  Windows on a virtual display:")
-        for line in result.stdout.strip().split('\n'):
-            if line:
-                print(f"    {line}")
-    except Exception as e:
-        print(f"  Window validation error: {e}")
-    
-    print("Application launch complete")
-
-
-def cleanup_processes():
-    print("Completion of processes...")
-    
-    for process in app_processes:
-        try:
-            if process.poll() is None:
-                print(f"  Application completion PID: {process.pid}")
-                process.terminate()
-                try:
-                    process.wait(timeout=3)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-        except Exception as e:
-            print(f"  Application completion error: {e}")
-    
-    try:
-        if xvfb_process and xvfb_process.poll() is None:
-            print("  Completion Xvfb...")
-            xvfb_process.terminate()
-            try:
-                xvfb_process.wait(timeout=3)
-            except subprocess.TimeoutExpired:
-                xvfb_process.kill()
-    except Exception as e:
-        print(f"  Completion error Xvfb: {e}")
-    
-    os.environ['DISPLAY'] = original_display
-    print("All processes are complete")
-
-
-
-def capture_app_windows():
-    try:
-        if not hasattr(capture_app_windows, '_windows_placed'):
-            print("First window capture, checking placement...")
-            place_all_windows_on_halves()
-            capture_app_windows._windows_placed = True
-        
-        windows = []
-        
-        window_infos = get_main_window_info()
-        
-        for win_info in window_infos:
-            window_id = win_info.get('id')
-            app_name = win_info.get('app', 'Unknown')
-            width = win_info.get('width', 0)
-            height = win_info.get('height', 0)
-            
-            if not window_id:
-                print("  Skip window without ID")
-                continue
-            
-            img = capture_clean_window(window_id, app_name=app_name)
-            
-            if img is not None and img.shape[0] > 10 and img.shape[1] > 10:
-                h, w = img.shape[:2]
-                
-                gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-                mean_brightness = cv2.mean(gray)[0]
-                
-                if mean_brightness < 5:
-                    print(f"  The image is too dark, skip it.")
-                    continue
-                
-                _, thresh = cv2.threshold(gray, 15, 255, cv2.THRESH_BINARY)
-                contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                
-                if contours:
-                    cnt = max(contours, key=cv2.contourArea)
-                    x_cnt, y_cnt, w_cnt, h_cnt = cv2.boundingRect(cnt)
-                    
-                    if w_cnt > 50 and h_cnt > 50:
-                        margin = 5
-                        x_start = max(0, x_cnt - margin)
-                        y_start = max(0, y_cnt - margin)
-                        x_end = min(img.shape[1], x_cnt + w_cnt + margin)
-                        y_end = min(img.shape[0], y_cnt + h_cnt + margin)
-                        
-                        if x_end > x_start and y_end > y_start:
-                            img = img[y_start:y_end, x_start:x_end]
-                
-                windows.append({
-                    'id': window_id,
-                    'name': f"{app_name}: Main window",
-                    'image': img,
-                    'width': img.shape[1],
-                    'height': img.shape[0],
-                    'app': app_name
-                })
-
-                if len(windows) >= max_windows:
-                    break
-
-        if not windows:
-            print("No application windows found, creating placeholders")
-            for i, appl in enumerate(apps[:2]):
-                app_name = appl.split()[0] if ' ' in appl else appl
-                placeholder = np.zeros((400, 600, 3), dtype=np.uint8)
-                cv2.putText(placeholder, f"App: {app_name}", (30, 100),
-                          cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-                cv2.putText(placeholder, "Wait window...", (30, 140),
-                          cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200, 200, 255), 1)
-                cv2.putText(placeholder, "Trying redraw...", (30, 180),
-                          cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 200, 200), 1)
-                
-                windows.append({
-                    'id': f'placeholder_{i}',
-                    'name': f'{app_name} (placegholder)',
-                    'image': placeholder,
-                    'width': 600,
-                    'height': 400,
-                    'app': app_name
-                })
-        
-        return windows
-        
-    except Exception as e:
-        print(f"Error in capture_app_windows: {e}")
-        import traceback
-        traceback.print_exc()
-        return []
-
-
-def create_tiled_view(windows, max_width=1920, tile_width=400, tile_height=300):
-    if not windows:
-        empty = np.zeros((tile_height, tile_width, 3), dtype=np.uint8)
-        cv2.putText(empty, "No application windows", (50, 150),
-                  cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
-        return empty
-    
-    total_windows = len(windows)
-    cols = min(3, max(1, max_width // tile_width))
-    rows = (total_windows + cols - 1) // cols
-    
-    tiled_image = np.zeros((rows * tile_height, cols * tile_width, 3), dtype=np.uint8)
-    
-    for i, window in enumerate(windows):
-        row = i // cols
-        col = i % cols
-        
-        img = window['image']
-        h, w = img.shape[:2]
-        
-        scale = min(tile_width / w, tile_height / h) * 0.9
-        new_w = int(w * scale)
-        new_h = int(h * scale)
-        
-        if new_w != w or new_h != h:
-            img = cv2.resize(img, (new_w, new_h))
-        
-        x_offset = col * tile_width + (tile_width - new_w) // 2
-        y_offset = row * tile_height + (tile_height - new_h) // 2
-        
-        tiled_image[y_offset:y_offset+new_h, x_offset:x_offset+new_w] = img
-    
-    return tiled_image
 
 def cleanup_inactive_clients():
+    """Удаляет неактивных клиентов из структур данных"""
     with clients_lock:
         current_time = time.time()
         to_remove = []
-        
         for client_id, last_active in list(client_last_activity.items()):
             if current_time - last_active > CLIENT_TIMEOUT:
                 to_remove.append(client_id)
         
         for client_id in to_remove:
-            if client_id in client_queues_tiled:
-                while not client_queues_tiled[client_id].empty():
-                    try:
-                        client_queues_tiled[client_id].get_nowait()
-                    except queue.Empty:
-                        break
-                del client_queues_tiled[client_id]
-            
+            # Очищаем очереди
             if client_id in client_queues_individual:
                 for window_idx in list(client_queues_individual[client_id].keys()):
                     while not client_queues_individual[client_id][window_idx].empty():
@@ -786,75 +105,19 @@ def cleanup_inactive_clients():
             if client_id in client_last_activity:
                 del client_last_activity[client_id]
             
+            # Удаляем из маппинга сессий
             session_ids_to_remove = []
             for session_id, cid in list(client_session_map.items()):
                 if cid == client_id:
                     session_ids_to_remove.append(session_id)
-            
             for session_id in session_ids_to_remove:
                 del client_session_map[session_id]
             
-            print(f"Inactive user removed {client_id}")
-        
+            print(f"Неактивный пользователь {client_id} удалён")
         return len(to_remove)
 
-def broadcast_frames():
-    print("Launching application window streaming...")
-    
-    last_cleanup = time.time()
-    
-    while True:
-        try:
-            windows = capture_app_windows()
-            tiled_image = create_tiled_view(windows)
-            
-            with clients_lock:
-                current_time = time.time()
-                active_client_ids = list(client_last_activity.keys())
-                
-                for client_id in active_client_ids:
-                    if current_time - client_last_activity.get(client_id, 0) > CLIENT_TIMEOUT:
-                        continue
-                    
-                    try:
-                        if client_queues_tiled[client_id].full():
-                            try:
-                                client_queues_tiled[client_id].get_nowait()
-                            except queue.Empty:
-                                pass
-                        
-                        _, buffer_tiled = cv2.imencode('.jpg', tiled_image, [cv2.IMWRITE_JPEG_QUALITY, 95])
-                        client_queues_tiled[client_id].put_nowait(buffer_tiled.tobytes())
-
-
-                        for i, window in enumerate(windows):
-                            if i >= max_windows:
-                                break
-                            
-                            if client_queues_individual[client_id][i].full():
-                                try:
-                                    client_queues_individual[client_id][i].get_nowait()
-                                except queue.Empty:
-                                    pass
-                            
-                            _, buffer_window = cv2.imencode('.jpg', window['image'], [cv2.IMWRITE_JPEG_QUALITY, 95])
-                            client_queues_individual[client_id][i].put_nowait(buffer_window.tobytes())
-                            
-                    except (queue.Full, Exception) as e:
-                        pass
-            
-            if time.time() - last_cleanup > CLEANUP_INTERVAL:
-                removed = cleanup_inactive_clients()
-                if removed > 0:
-                    print(f"Cleaning: {removed} inactive users removed")
-                last_cleanup = time.time()
-        
-        except Exception as e:
-            print(f"Error in broadcast_frames: {e}")
-        
-        # time.sleep(0.016)
-
 def get_or_create_client_id():
+    """Создаёт или возвращает существующий ID клиента на основе сессии Flask"""
     with clients_lock:
         if 'session_id' not in session:
             session['session_id'] = secrets.token_hex(16)
@@ -869,25 +132,301 @@ def get_or_create_client_id():
             client_id = random.randint(1000, 9999)
             client_session_map[session_id] = client_id
             session['client_id'] = client_id
-            print(f"🆕 A new user {client_id} has been created for the session {session_id[:8]}...")
+            print(f"🆕 Новый пользователь {client_id} создан для сессии {session_id[:8]}...")
         
         client_last_activity[client_id] = time.time()
         return client_id
 
-def generate_tiled_for_client(client_id):
-    while True:
-        try:
-            frame_bytes = client_queues_tiled[client_id].get(timeout=1.0)
-            yield (b'--frame\r\n'
-                   b'Content-Type: image/jpeg\r\n\r\n' + 
-                   frame_bytes + b'\r\n')
-        except queue.Empty:
+def get_window_geometry_cached(window_id, display=':99'):
+    """
+    Возвращает геометрию окна {x, y, width, height} с кэшированием.
+    Если данные устарели (WINDOW_GEOMETRY_CACHE_TIME), выполняет xwininfo.
+    """
+    global _window_geometry_cache, _window_geometry_cache_time
+    now = time.time()
+    
+    # Проверяем кэш
+    if window_id in _window_geometry_cache:
+        geom, timestamp = _window_geometry_cache[window_id]
+        if now - timestamp < WINDOW_GEOMETRY_CACHE_TIME:
+            return geom
+    
+    # Иначе запрашиваем свежие данные
+    try:
+        result = subprocess.run(
+            f"DISPLAY={display} xwininfo -id {window_id}",
+            shell=True, capture_output=True, text=True, timeout=2
+        )
+        if result.returncode != 0:
+            return None
+        
+        lines = result.stdout.split('\n')
+        geom = {}
+        for line in lines:
+            if 'Absolute upper-left X:' in line:
+                geom['x'] = int(line.split(':')[1].strip())
+            elif 'Absolute upper-left Y:' in line:
+                geom['y'] = int(line.split(':')[1].strip())
+            elif 'Width:' in line:
+                geom['width'] = int(line.split(':')[1].strip())
+            elif 'Height:' in line:
+                geom['height'] = int(line.split(':')[1].strip())
+        
+        if 'x' in geom and 'y' in geom and 'width' in geom and 'height' in geom:
+            _window_geometry_cache[window_id] = (geom, now)
+            return geom
+        else:
+            return None
+    except Exception as e:
+        print(f"Ошибка получения геометрии окна {window_id}: {e}")
+        return None
+
+def get_main_window_info_cached(display=':99'):
+    """
+    Возвращает список основных окон (кэшируется на WINDOW_INFO_CACHE_TIME секунд).
+    """
+    global _window_info_cache, _window_info_cache_time
+    now = time.time()
+    if now - _window_info_cache_time < WINDOW_INFO_CACHE_TIME and _window_info_cache:
+        return _window_info_cache
+
+    windows = []
+    try:
+        result = subprocess.run(
+            f"DISPLAY={display} wmctrl -l -p -x",
+            shell=True, capture_output=True, text=True, timeout=3
+        )
+        if not result.stdout:
+            return windows
+
+        lines = result.stdout.strip().split('\n')
+        for line in lines:
+            parts = line.split()
+            if len(parts) < 5:
+                continue
+            window_id = parts[0]
+            windows.append({
+                'id': window_id,
+                'app': parts[3],
+                'pid': parts[2] if len(parts) > 2 else '0',
+                'title': ' '.join(parts[4:]) if len(parts) > 4 else '',
+                'is_main': True
+            })
+        _window_info_cache = windows
+        _window_info_cache_time = now
+    except Exception as e:
+        print(f"Ошибка получения информации об окнах: {e}")
+        _window_info_cache = []
+    return windows
+
+def place_window_on_half(window_id, half='left', display=':99'):
+    """Размещает окно на левой или правой половине экрана (wmctrl)."""
+    try:
+        # Получаем размер экрана
+        root_result = subprocess.run(
+            f"DISPLAY={display} xwininfo -root",
+            shell=True, capture_output=True, text=True, timeout=2
+        )
+        screen_width = 1920
+        screen_height = 1080
+        if root_result.returncode == 0:
+            for line in root_result.stdout.split('\n'):
+                if 'Width:' in line:
+                    screen_width = int(line.split(':')[1].strip())
+                elif 'Height:' in line:
+                    screen_height = int(line.split(':')[1].strip())
+        
+        half_width = screen_width // 2
+        window_height = int(screen_height * 0.9)
+        window_y = (screen_height - window_height) // 2
+        window_x = 0 if half == 'left' else half_width
+        
+        cmd = f"DISPLAY={display} wmctrl -i -r {window_id} -e 0,{window_x},{window_y},{half_width},{window_height}"
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=3)
+        if result.returncode == 0:
+            # Добавляем вертикальное расширение
+            subprocess.run(
+                f"DISPLAY={display} wmctrl -i -r {window_id} -b add,maximized_vert",
+                shell=True, capture_output=True, timeout=2
+            )
+            return True
+        return False
+    except Exception as e:
+        print(f"Ошибка в place_window_on_half: {e}")
+        return False
+
+def place_all_windows_on_halves():
+    """Размещает все найденные окна по половинкам экрана (по очереди)."""
+    print("Размещение окон по половинам экрана...")
+    windows = get_main_window_info_cached()
+    if not windows:
+        print("  Окна не найдены, повтор через 3 секунды...")
+        time.sleep(3)
+        windows = get_main_window_info_cached()
+    
+    print(f"  Найдено окон: {len(windows)}")
+    placed_windows = 0
+    for window in windows:
+        window_id = window.get('id')
+        if not window_id:
             continue
+        half = 'left' if placed_windows % 2 == 0 else 'right'
+        print(f"  🪟 Окно {window_id} ({window.get('app', 'unknown')}) -> {half} половина")
+        if place_window_on_half(window_id, half):
+            placed_windows += 1
+    print(f"Размещено окон: {placed_windows}/{len(windows)}")
+    return placed_windows
+
+def capture_app_windows():
+    """
+    Захватывает окна приложений, используя MSS.
+    Сначала делается снимок всего экрана, затем для каждого окна вырезается его область.
+    Возвращает список словарей с полями: id, name, image (numpy BGR), width, height, app.
+    """
+    try:
+        # Первоначальное размещение окон (выполняется один раз)
+        if not hasattr(capture_app_windows, '_windows_placed'):
+            place_all_windows_on_halves()
+            capture_app_windows._windows_placed = True
+
+        window_infos = get_main_window_info_cached()
+        if not window_infos:
+            return []
+
+        # Захватываем весь экран через MSS
+        with mss() as sct:
+            # monitors[0] — объединённая область всех мониторов (для одного экрана подходит)
+            full_img = sct.grab(sct.monitors[0])
+            img_array = np.frombuffer(full_img.bgra, dtype=np.uint8).reshape(full_img.height, full_img.width, 4)
+            full_np = img_array[:, :, :3].copy()
+            # full_np = np.array(full_img)
+            # full_np = cv2.cvtColor(full_np, cv2.COLOR_RGB2BGR)
+            screen_h, screen_w = full_np.shape[:2]
+
+            windows_data = []
+            for win_info in window_infos:
+                window_id = win_info.get('id')
+                if not window_id:
+                    continue
+
+                geom = get_window_geometry_cached(window_id)
+                if geom is None:
+                    continue
+
+                x, y, w, h = geom['x'], geom['y'], geom['width'], geom['height']
+                if w <= 0 or h <= 0:
+                    continue
+
+                # Корректировка области, если окно частично за пределами экрана
+                x1 = max(0, x)
+                y1 = max(0, y)
+                x2 = min(screen_w, x + w)
+                y2 = min(screen_h, y + h)
+                if x2 <= x1 or y2 <= y1:
+                    continue
+
+                img = full_np[y1:y2, x1:x2].copy()
+
+                windows_data.append({
+                    'id': window_id,
+                    'name': f"{win_info.get('app', 'Unknown')}: Main window",
+                    'image': img,
+                    'width': img.shape[1],
+                    'height': img.shape[0],
+                    'app': win_info.get('app', 'Unknown')
+                })
+                if len(windows_data) >= MAX_WINDOWS:
+                    break
+
+        # Если окон нет, создаём плейсхолдеры
+        if not windows_data:
+            for i, appl in enumerate(windows_head_names[:2]):
+                app_name = appl.split()[0] if ' ' in appl else appl
+                placeholder = np.zeros((400, 600, 3), dtype=np.uint8)
+                cv2.putText(placeholder, f"App: {app_name}", (30, 100),
+                          cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+                cv2.putText(placeholder, "Wait window...", (30, 140),
+                          cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200, 200, 255), 1)
+                windows_data.append({
+                    'id': f'placeholder_{i}',
+                    'name': f'{app_name} (placeholder)',
+                    'image': placeholder,
+                    'width': 600,
+                    'height': 400,
+                    'app': app_name
+                })
+        return windows_data
+
+    except Exception as e:
+        print(f"Ошибка в capture_app_windows: {e}")
+        traceback.print_exc()
+        return []
+
+# ========== Поток трансляции ==========
+
+def broadcast_frames(stop_event):
+    """
+    Основной поток: с частотой CAPTURE_INTERVAL захватывает окна,
+    кодирует их в JPEG и рассылает по очередям активных клиентов.
+    """
+    print("Запуск потока трансляции окон...")
+    last_cleanup = time.time()
+    last_capture_time = 0
+
+    while not stop_event.is_set():
+        try:
+            now = time.time()
+            if now - last_capture_time >= CAPTURE_INTERVAL:
+                windows = capture_app_windows()
+                # Кодируем захваченные окна в JPEG
+                jpeg_frames = []
+                for win in windows:
+                    ret, buf = cv2.imencode('.jpg', win['image'], [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
+                    if ret:
+                        jpeg_frames.append({
+                            'window_id': win['id'],
+                            'jpeg_bytes': buf.tobytes()
+                        })
+                last_capture_time = now
+
+                # Рассылаем JPEG по очередям клиентов
+                with clients_lock:
+                    current_time = time.time()
+                    for client_id in list(client_last_activity.keys()):
+                        if current_time - client_last_activity[client_id] > CLIENT_TIMEOUT:
+                            continue
+                        for i, jpeg in enumerate(jpeg_frames):
+                            if i >= MAX_WINDOWS:
+                                break
+                            q = client_queues_individual[client_id][i]
+                            if q.full():
+                                try:
+                                    q.get_nowait()  # освобождаем место
+                                except queue.Empty:
+                                    pass
+                            try:
+                                q.put_nowait(jpeg['jpeg_bytes'])
+                            except queue.Full:
+                                pass
+
+            # Очистка неактивных клиентов
+            if time.time() - last_cleanup > CLEANUP_INTERVAL:
+                removed = cleanup_inactive_clients()
+                if removed > 0:
+                    print(f"Очистка: удалено {removed} неактивных пользователей")
+                last_cleanup = time.time()
+
+            # Небольшая задержка для снижения нагрузки на CPU
+            time.sleep(0.001)
+
         except Exception as e:
-            print(f"Error in generate_tiled_for_client for user {client_id}: {e}")
-            break
+            print(f"Ошибка в broadcast_frames: {e}")
+            time.sleep(0.1)
+
+# ========== Генератор MJPEG для клиента ==========
 
 def generate_window_for_client(client_id, window_idx):
+    """Генератор кадров для конкретного окна конкретного клиента (MJPEG)."""
     while True:
         try:
             if window_idx in client_queues_individual[client_id]:
@@ -895,59 +434,34 @@ def generate_window_for_client(client_id, window_idx):
                 yield (b'--frame\r\n'
                        b'Content-Type: image/jpeg\r\n\r\n' + 
                        frame_bytes + b'\r\n')
-            # else:
-                # time.sleep(0.1)
         except queue.Empty:
             continue
         except Exception as e:
-            print(f"Error in generate_window_for_client for user {client_id}, window {window_idx}: {e}")
+            print(f"Ошибка в generate_window_for_client для {client_id}, окно {window_idx}: {e}")
             break
 
+# ========== Blueprint и маршруты Flask ==========
 
-# ============= FLASK ROUTES =============
+visual_bp = Blueprint('visual', __name__, url_prefix='/visual')
 
 @visual_bp.route('/')
 def index():
     client_id = get_or_create_client_id()
     session_id = session.get('session_id', 'No session')
     
-    try:
-        windows_data = capture_app_windows()
-        windows_count = len(windows_data)
-    except Exception as e:
-        windows_data = []
-        windows_count = 0
-    
+    # Получаем количество окон из кэша (без захвата изображений)
+    windows_count = len(get_main_window_info_cached())
     
     with clients_lock:
         current_time = time.time()
-        active_clients = 0
-        for cid, last_active in client_last_activity.items():
-            if current_time - last_active <= CLIENT_TIMEOUT:
-                active_clients += 1
+        active_clients = sum(1 for last_active in client_last_activity.values()
+                             if current_time - last_active <= CLIENT_TIMEOUT)
     
-    
-    return render_template(
-        'visual.html',  
-        client_id=client_id,
-        session_id=session_id,
-        windows_count=windows_count,
-        active_clients=active_clients
-    )
-
-
-@visual_bp.route('/screenshot_tiled')
-def screenshot_tiled():
-    client_id = get_or_create_client_id()
-    try:
-        frame_bytes = client_queues_tiled[client_id].get()
-        response = make_response(frame_bytes)
-        response.headers.set('Content-Type', 'image/jpeg')
-        response.headers.set('Content-Disposition', 
-                           f'attachment; filename=screenshot_tiled_{int(time.time())}.jpg')
-        return response
-    except:
-        return "No data available", 404
+    return render_template('visual.html',
+                           client_id=client_id,
+                           session_id=session_id,
+                           windows_count=windows_count,
+                           active_clients=active_clients)
 
 @visual_bp.route('/screenshot_window/<int:window_idx>')
 def screenshot_window(window_idx):
@@ -957,21 +471,13 @@ def screenshot_window(window_idx):
             frame_bytes = client_queues_individual[client_id][window_idx].get()
             response = make_response(frame_bytes)
             response.headers.set('Content-Type', 'image/jpeg')
-            response.headers.set('Content-Disposition', 
+            response.headers.set('Content-Disposition',
                                f'attachment; filename=screenshot_window_{window_idx}_{int(time.time())}.jpg')
             return response
         else:
             return "Window not found", 404
     except:
         return "No data available", 404
-
-@visual_bp.route('/video_feed_tiled')
-def video_feed_tiled():
-    client_id = get_or_create_client_id()
-    return Response(
-        generate_tiled_for_client(client_id),
-        mimetype='multipart/x-mixed-replace; boundary=frame'
-    )
 
 @visual_bp.route('/video_feed_window/<int:window_idx>')
 def video_feed_window(window_idx):
@@ -983,15 +489,11 @@ def video_feed_window(window_idx):
 
 @visual_bp.route('/client_stats')
 def client_stats():
-    client_id = get_or_create_client_id() 
+    client_id = get_or_create_client_id()
     with clients_lock:
         current_time = time.time()
-        active_clients = 0
-        
-        for cid, last_active in client_last_activity.items():
-            if current_time - last_active <= CLIENT_TIMEOUT:
-                active_clients += 1
-        
+        active_clients = sum(1 for last_active in client_last_activity.values()
+                             if current_time - last_active <= CLIENT_TIMEOUT)
         return {
             'active_clients': active_clients,
             'total_sessions': len(client_session_map),
@@ -1000,18 +502,20 @@ def client_stats():
 
 @visual_bp.route('/windows_count')
 def windows_count():
-    windows = capture_app_windows()
-    client_id = get_or_create_client_id() 
-    return {'count': len(windows)}
+    # Используем кэшированный список окон (без захвата)
+    count = len(get_main_window_info_cached())
+    client_id = get_or_create_client_id()
+    return {'count': count}
 
 @visual_bp.route('/force_redraw_all')
 def force_redraw_all():
+    """Принудительная перерисовка окон (может не требоваться с MSS, но оставлено для совместимости)."""
     try:
-        window_infos = get_main_window_info()
+        window_infos = get_main_window_info_cached()
         all_windows = []
-        
         for win_info in window_infos:
             all_windows.append(win_info['id'])
+            # Пытаемся найти дочерние окна
             try:
                 tree_result = subprocess.run(
                     f"DISPLAY=:99 xwininfo -id {win_info['id']} -children",
@@ -1026,28 +530,22 @@ def force_redraw_all():
                 pass
 
         for window_id in all_windows:
-            force_window_redraw(window_id)
-        
-        return f"Forced redrawing performed for {len(all_windows)} windows"
+            # Используем xrefresh для перерисовки
+            subprocess.run(f"DISPLAY=:99 xrefresh -id {window_id}", shell=True, capture_output=True, timeout=2)
+        return f"Принудительная перерисовка выполнена для {len(all_windows)} окон"
     except Exception as e:
-        return f"Error: {str(e)}"
+        return f"Ошибка: {str(e)}"
 
 @visual_bp.route('/debug')
 def debug():
-    client_id = get_or_create_client_id() 
+    client_id = get_or_create_client_id()
     with clients_lock:
         current_time = time.time()
         clients_info = []
-        
         for client_id, last_active in sorted(client_last_activity.items()):
             age = current_time - last_active
             active = age <= CLIENT_TIMEOUT
-            
-            sessions = []
-            for session_id, cid in client_session_map.items():
-                if cid == client_id:
-                    sessions.append(session_id[:8] + '...')
-            
+            sessions = [sid[:8] + '...' for sid, cid in client_session_map.items() if cid == client_id]
             clients_info.append({
                 'id': client_id,
                 'last_active': datetime.fromtimestamp(last_active).strftime('%H:%M:%S'),
@@ -1055,79 +553,189 @@ def debug():
                 'active': active,
                 'sessions': sessions
             })
-        
         return {
             'clients': clients_info,
             'total_clients': len(client_last_activity),
             'active_clients': sum(1 for c in clients_info if c['active']),
-            'cleanup_timeout': CLIENT_TIMEOUT
+            'cleanup_timeout': CLIENT_TIMEOUT,
+            'capture_interval_ms': CAPTURE_INTERVAL * 1000,
+            'jpeg_quality': JPEG_QUALITY,
+            'max_windows': MAX_WINDOWS
         }
 
 @visual_bp.route('/place_windows')
 def place_windows():
+    """Ручное размещение окон по половинкам (полезно после изменения списка окон)."""
     placed = place_all_windows_on_halves()
-    return f"Placed {placed} windows on half of the screen. <a href='/'>Back</a>"
-
+    return f"Размещено {placed} окон по половинам. <a href='/'>Назад</a>"
 
 @visual_bp.route('/place_window/<window_id>/<half>')
-def place_window(window_id, half):
+def place_window_route(window_id, half):
     if half not in ['left', 'right']:
-        return "Invalid parameter half. Use ‘left’ or ‘right’."
-    
+        return "Неверный параметр half. Используйте 'left' или 'right'."
     success = place_window_on_half(window_id, half)
     if success:
-        return f"Window {window_id} is placed on {half} half. <a href='/'>Back</a>"
+        return f"Окно {window_id} размещено на {half} половине. <a href='/'>Назад</a>"
     else:
-        return f"Failed to place window {window_id}"
+        return f"Не удалось разместить окно {window_id}"
 
-def start_threads():
-    launch_applications()
-    broadcast_thread = threading.Thread(target=broadcast_frames, daemon=True)
-    broadcast_thread.start()
-    print("All threads are running.")
+# ========== Запуск приложений и управление процессами ==========
+
+def launch_applications():
+    """Запускает оконный менеджер и пользовательские приложения на виртуальном дисплее."""
+    print("Запуск приложений на виртуальном дисплее...")
+    
+    # Запуск оконного менеджера (openbox)
+    try:
+        print("  Запуск оконного менеджера openbox...")
+        env = os.environ.copy()
+        env['DISPLAY'] = ':99'
+        wm_process = subprocess.Popen(
+            ["openbox", "--sm-disable"],
+            shell=False,
+            env=env,
+            start_new_session=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        app_processes.append(wm_process)
+        time.sleep(2)
+    except Exception as e:
+        print(f"  Не удалось запустить оконный менеджер: {e}")
+    
+    # Запуск пользовательских приложений
+    for i, app_cmd in enumerate(apps):
+        try:
+            print(f"  Запуск: {app_cmd}")
+            env = os.environ.copy()
+            env['DISPLAY'] = ':99'
+            process = subprocess.Popen(
+                app_cmd,
+                shell=False,
+                env=env,
+                start_new_session=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            app_processes.append(process)
+            time.sleep(5)
+            if process.poll() is None:
+                print(f"  Приложение запущено (PID: {process.pid})")
+            else:
+                print(f"  Приложение завершилось с кодом {process.poll()}")
+        except Exception as e:
+            print(f"  Ошибка запуска {app_cmd}: {e}")
+    
+    # Размещение окон после запуска
+    print("\nРазмещение окон...")
+    time.sleep(2)
+    placed = place_all_windows_on_halves()
+    if placed == 0:
+        print("  Не удалось разместить окна, повтор через 3 секунды...")
+        time.sleep(3)
+        place_all_windows_on_halves()
+    
+    # Проверка
+    try:
+        result = subprocess.run("DISPLAY=:99 wmctrl -l", shell=True, capture_output=True, text=True, timeout=5)
+        print("  Окна на виртуальном дисплее:")
+        for line in result.stdout.strip().split('\n'):
+            if line:
+                print(f"    {line}")
+    except Exception as e:
+        print(f"  Ошибка проверки окон: {e}")
+
+
+def cleanup_processes():
+    print("Completion of processes...")
+    global broadcast_thread, stop_broadcast
+
+    if stop_broadcast:
+        stop_broadcast.set()
+    if broadcast_thread and broadcast_thread.is_alive():
+        broadcast_thread.join(timeout=3)
+        if broadcast_thread.is_alive():
+            print("Warning: broadcast thread did not stop within timeout.")
+        else:
+            print("Broadcast thread stopped.")
+
+    for process in app_processes:
+        try:
+            if process.poll() is None:
+                print(f"  Application completion PID: {process.pid}")
+                process.terminate()
+                try:
+                    process.wait(timeout=8)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+        except Exception as e:
+            print(f"  Application completion error: {e}")
+    
+    try:
+        if xvfb_process and xvfb_process.poll() is None:
+            print("  Completion Xvfb...")
+            xvfb_process.terminate()
+            try:
+                xvfb_process.wait(timeout=8)
+            except subprocess.TimeoutExpired:
+                xvfb_process.kill()
+    except Exception as e:
+        print(f"  Completion error Xvfb: {e}")
+    
+    os.environ['DISPLAY'] = original_display
+    print("All processes are complete")
+
 
 def signal_handler(signum, frame):
-    print("\nFinishing up...")
+    print("\nЗавершение работы...")
     cleanup_processes()
     os._exit(0)
 
 signal.signal(signal.SIGINT, signal_handler)
 signal.signal(signal.SIGTERM, signal_handler)
 
-# if __name__ == '__main__':
+def start_threads():
+    """Запускает поток трансляции."""
+    global broadcast_thread, stop_broadcast
+    stop_broadcast = threading.Event()
+    broadcast_thread = threading.Thread(target=broadcast_frames, args=(stop_broadcast,), daemon=True)
+    broadcast_thread.start()
+    print("Поток трансляции запущен.")
+
+# ========== Инициализация Xvfb и запуск ==========
+
+print("Проверка зависимостей...")
+check_dependencies()
+
+print("Запуск виртуального дисплея Xvfb...")
+xvfb_process = subprocess.Popen(
+    ["Xvfb", ":99", "-screen", "0", "1920x1080x24"],
+    stdout=subprocess.PIPE,
+    stderr=subprocess.PIPE
+)
+time.sleep(2)
+os.environ['DISPLAY'] = ':99'
+subprocess.run(["xhost", "+"], capture_output=True)
+print(f"Виртуальный дисплей запущен: {os.environ['DISPLAY']}")
+
+# ========== Функция регистрации blueprint'а ==========
+
 def init_visual(app):
     app.register_blueprint(visual_bp)
     print("=" * 60)
-    print(" Multi-user window broadcasting")
+    print("  Многопользовательская трансляция окон (оптимизированная с MSS)")
+    print("=" * 60)
+    print("\nНастройки:")
+    print(f"  Таймаут клиента: {CLIENT_TIMEOUT} сек")
+    print(f"  Интервал очистки: {CLEANUP_INTERVAL} сек")
+    print(f"  Интервал захвата: {CAPTURE_INTERVAL*1000:.0f} мс (~{1/CAPTURE_INTERVAL:.0f} FPS)")
+    print(f"  Качество JPEG: {JPEG_QUALITY}")
+    print(f"  Максимум окон: {MAX_WINDOWS}")
+    print("\nДополнительные маршруты:")
+    print("  /debug - отладочная информация")
+    print("  /client_stats - статистика пользователей")
+    print("  /place_windows - принудительное размещение окон")
     print("=" * 60)
     
-    extra_utils = ['xdotool', 'import', 'scrot', 'xwd', 'xrefresh', 'openbox']
-    for util in extra_utils:
-        try:
-            if util == 'import':
-                subprocess.run(["convert", "--version"], capture_output=True)
-            else:
-                subprocess.run([util, "--version"], capture_output=True)
-            print(f"{util}: available")
-        except:
-            print(f" {util}: not found, but let's try to continue...")
-    
-    try:
-        subprocess.run(["openbox", "--version"], capture_output=True)
-    except:
-        print(" Openbox is not installed. It is recommended to install it for better window management..")
-        print("   sudo apt install openbox")
-    
+    launch_applications()
     start_threads()
-    
-    print(f"\n Settings:")
-    print(f"   User timeout: {CLIENT_TIMEOUT} seconds")
-    print(f"   Cleanup interval: {CLEANUP_INTERVAL} seconds")
-    
-    print("\n Server is running:")
-    print("   http://localhost:5000")
-    print("   http://<your-ip>:5000")
-    print("\n Additionally:")
-    print("   /debug - debug information")
-    print("   /client_stats - user stats")
-    print("=" * 60)
