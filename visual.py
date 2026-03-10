@@ -3,6 +3,7 @@
 
 import os
 import time
+import json
 import subprocess
 import threading
 import signal
@@ -14,6 +15,15 @@ import re
 import traceback
 from collections import defaultdict
 from datetime import datetime, timedelta
+from dotenv import load_dotenv
+
+ENVIRONMENT = os.getenv("ENVIRONMENT", "dev")  # по умолчанию dev
+env_file = f".env.{ENVIRONMENT}"
+if os.path.exists(env_file):
+    load_dotenv(env_file)
+    print(f"Loaded environment: {ENVIRONMENT}")
+else:
+    print(f"Warning: {env_file} not found, using system environment variables only")
 
 import numpy as np
 import cv2
@@ -51,12 +61,14 @@ original_display = os.environ.get('DISPLAY', ':0')
 os.environ['DISPLAY'] = ':99'        # будет переопределено после запуска Xvfb
 
 # Список приложений для запуска (можно изменить)
-apps = [
-    "gedit",
-    "gnome-system-monitor",
 
-    # "/home/ksk/Apps/visualization.sh"
-]
+apps_str = os.getenv("visual_path_array", "[]")
+apps = []
+
+try:
+    apps = json.loads(apps_str)
+except json.JSONDecodeError:
+    print("Ошибка: переменная visual_path_bash не содержит валидный JSON")
 
 windows_head_names = [
     "Head Camera",
