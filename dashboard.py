@@ -252,7 +252,7 @@ def run_flask_app():
 def main():
     # Parse command line arguments
     parser = argparse.ArgumentParser(description='Unitree Robot 3D Motor Dashboard')
-    parser.add_argument('--robot', '-r', type=str, choices=['g1', 'h1'], required=True,
+    parser.add_argument('--robot', '-r', type=str, choices=['g1', 'h1'], required=True, default='h1',
                         help='Robot type: g1 or h1')
     parser.add_argument('--interface', '-i', type=str, default=None,
                         help='Network interface (e.g., en0, eth0, enp3s0)')
