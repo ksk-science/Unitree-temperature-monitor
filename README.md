@@ -57,7 +57,7 @@ The visualization displays all motors of the robot with:
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/Autodiscovery/Unitree-G1-temperature-monitor
+git clone https://github.com/ksk-science/Unitree-G1-temperature-monitor
 cd unitree-g1-temperature-monitor
 ```
 
@@ -122,12 +122,18 @@ No internet connection or additional asset downloads required - everything is re
 
 ## 🎯 Usage
 
+For stable operation of the visual module:
+
+```bash
+sudo apt install -y python3-pip python3-dev xvfb openbox x11-utils wmctrl xdotool x11-xserver-utils libgl1-mesa-glx libglib2.0-0
+```
+
 ### Quick Start (Test Mode)
 
 Test the G1 visualizer with simulated data (no robot connection needed):
 
 ```bash
-python test_dashboard_3d.py
+python test_dashboard.py
 ```
 
 Then open your browser to: **http://localhost:8081**
@@ -138,7 +144,7 @@ Then open your browser to: **http://localhost:8081**
 Connect to a real G1/H1 robot:
 
 ```bash
-python dashboard_3d.py --robot <robot_type> --interface <network_interface>
+python dashboard.py --robot <robot_type> --interface <network_interface>
 ```
 
 Replace `<robot_type>` with the robot type - e.g. `g1`, `h1`). 
@@ -147,8 +153,8 @@ Replace `<network_interface>` with your network interface name (e.g., `en0`, `et
 
 Examples:
 ```bash
-python dashboard_3d.py --robot g1 --interface en0
-python dashboard_3d.py --robot h1 --interface en0
+python dashboard.py --robot g1 --interface en0
+python dashboard.py --robot h1 --interface en0
 ```
 
 Then open your browser to: **http://localhost:8081**
@@ -211,21 +217,25 @@ When connected to a real G1 robot, the dashboard displays live motor positions i
 
 ```
 unitree-g1-temperature-monitor/
-├── dashboard_3d.py          # Main application
-├── config_g1.py                # G1 configuration and motor mappings
+├── dashboard.py             # Main application
+├── config_g1.py             # G1 configuration and motor mappings
 ├── config_h1.py             # H1 configuration and motor mappings
 ├── templates/
 │   ├── index_g1.html        # G1 3D visualization frontend
-│   └── index_h1.html        # H1 3D visualization frontend
+│   ├── index_h1.html        # H1 3D visualization frontend
+│   └── visual.html          # Camera and Lidar visualization
 ├── assets/
 │   ├── js/                  # Local JavaScript libraries (offline support)
 │   │   ├── socket.io.min.js
 │   │   ├── three.min.js
 │   │   ├── STLLoader.js
 │   │   └── OrbitControls.js
+│   ├── css/
+│   │   ├── css_fonts.css
+│   │   └── main.css
 │   ├── g1/
 │   │   ├── g1_29dof_rev_1_0.urdf    # G1 URDF file (29DOF, from Unitree)
-│   │   └── meshes/                   # G1 STL mesh files (69 files, from Unitree)
+│   │   └── meshes/                  # G1 STL mesh files (69 files, from Unitree)
 │   └── h1/
 │       ├── h1.urdf                   # H1 URDF file (19DOF, from Unitree)
 │       └── meshes/                   # H1 STL mesh files (from Unitree)
