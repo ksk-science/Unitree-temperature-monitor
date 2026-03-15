@@ -7,7 +7,6 @@ import json
 import subprocess
 import threading
 import signal
-import queue
 import secrets
 import tempfile
 import shlex
@@ -17,7 +16,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
-ENVIRONMENT = os.getenv("ENVIRONMENT", "dev")  # по умолчанию dev
+ENVIRONMENT = os.getenv("ENVIRONMENT", "dev")
 env_file = f".env.{ENVIRONMENT}"
 if os.path.exists(env_file):
     load_dotenv(env_file)
@@ -31,44 +30,50 @@ from flask import Blueprint, render_template, Response, request, make_response, 
 from mss import mss
 
 # ========== Конфигурация ==========
-CAPTURE_INTERVAL = 0.033           # 30 кадров в секунду
-WINDOW_INFO_CACHE_TIME = 2.0        # обновлять список окон раз в 2 секунды
-WINDOW_GEOMETRY_CACHE_TIME = 1.0    # обновлять геометрию окон раз в 1 секунду
-CLIENT_TIMEOUT = 11                  # таймаут неактивного клиента (сек)
-CLEANUP_INTERVAL = 5                 # интервал очистки неактивных клиентов (сек)
-MAX_WINDOWS = 10                      # максимум отслеживаемых окон
-JPEG_QUALITY = 85                     # качество JPEG (0-100)
+CAPTURE_INTERVAL = 0.033               # ~30 FPS
+WINDOW_INFO_CACHE_TIME = 2.0            # кэш списка окон (сек)
+WINDOW_GEOMETRY_CACHE_TIME = 1.0        # кэш геометрии окон (сек)
+CLIENT_TIMEOUT = 11                     # неактивные клиенты удаляются через N сек
+CLEANUP_INTERVAL = 5                    # интервал проверки неактивных клиентов
+MAX_WINDOWS = 10                         # максимум отслеживаемых окон
+JPEG_QUALITY = 85                        # качество JPEG
 
 # ========== Глобальные переменные ==========
-app_processes = []
-client_queues_individual = defaultdict(lambda: defaultdict(lambda: queue.Queue(maxsize=1)))
-client_last_activity = {}
-client_session_map = {}
-clients_lock = threading.Lock()
+app_processes = []                       # процессы приложений
+xvfb_process = None
+
+# --- Новый механизм: последние кадры для каждого окна ---
+last_frames = [None] * MAX_WINDOWS        # список байтов JPEG для каждого окна
+last_frames_lock = threading.Lock()       # блокировка для доступа к last_frames
+
+# --- Данные для отслеживания активности клиентов (только статистика) ---
+client_last_activity = {}                 # client_id -> timestamp
+client_session_map = {}                   # session_id -> client_id
+clients_lock = threading.Lock()           # блокировка для работы с клиентами
 
 # Кэш информации об окнах (не изображений!)
 _window_info_cache = []
 _window_info_cache_time = 0
 
-# Кэш геометрии окон (координаты и размеры)
+# Кэш геометрии окон
 _window_geometry_cache = {}
 _window_geometry_cache_time = 0
 
+# Поток трансляции
 broadcast_thread = None
 stop_broadcast = None
 
 original_display = os.environ.get('DISPLAY', ':0')
-os.environ['DISPLAY'] = ':99'        # будет переопределено после запуска Xvfb
+os.environ['DISPLAY'] = ':99'
 
-# Список приложений для запуска (можно изменить)
-
+# Список приложений
 apps_str = os.getenv("visual_path_array", "[]")
 apps = []
 
 try:
     apps = json.loads(apps_str)
 except json.JSONDecodeError:
-    print("Ошибка: переменная visual_path_bash не содержит валидный JSON")
+    print("Ошибка: переменная visual_path_array не содержит валидный JSON")
 
 windows_head_names = [
     "Head Camera",
@@ -83,7 +88,7 @@ def check_dependencies():
     missing_utils = []
     for util in required_utils:
         try:
-            subprocess.run([util, "--version"], capture_output=True)
+            subprocess.run([util, "--version"], capture_output=True, timeout=1)
             print(f"  {util}: available")
         except:
             missing_utils.append(util)
@@ -95,7 +100,7 @@ def check_dependencies():
         time.sleep(3)
 
 def cleanup_inactive_clients():
-    """Удаляет неактивных клиентов из структур данных"""
+    """Удаляет неактивных клиентов из структур данных (только статистика)."""
     with clients_lock:
         current_time = time.time()
         to_remove = []
@@ -104,16 +109,6 @@ def cleanup_inactive_clients():
                 to_remove.append(client_id)
         
         for client_id in to_remove:
-            # Очищаем очереди
-            if client_id in client_queues_individual:
-                for window_idx in list(client_queues_individual[client_id].keys()):
-                    while not client_queues_individual[client_id][window_idx].empty():
-                        try:
-                            client_queues_individual[client_id][window_idx].get_nowait()
-                        except queue.Empty:
-                            break
-                del client_queues_individual[client_id]
-            
             if client_id in client_last_activity:
                 del client_last_activity[client_id]
             
@@ -129,7 +124,7 @@ def cleanup_inactive_clients():
         return len(to_remove)
 
 def get_or_create_client_id():
-    """Создаёт или возвращает существующий ID клиента на основе сессии Flask"""
+    """Создаёт или возвращает существующий ID клиента на основе сессии Flask."""
     with clients_lock:
         if 'session_id' not in session:
             session['session_id'] = secrets.token_hex(16)
@@ -167,7 +162,7 @@ def get_window_geometry_cached(window_id, display=':99'):
     try:
         result = subprocess.run(
             f"DISPLAY={display} xwininfo -id {window_id}",
-            shell=True, capture_output=True, text=True, timeout=2
+            shell=True, capture_output=True, text=True, timeout=2  # <- добавлен timeout
         )
         if result.returncode != 0:
             return None
@@ -189,6 +184,9 @@ def get_window_geometry_cached(window_id, display=':99'):
             return geom
         else:
             return None
+    except subprocess.TimeoutExpired:
+        print(f"Таймаут xwininfo для окна {window_id}")
+        return None
     except Exception as e:
         print(f"Ошибка получения геометрии окна {window_id}: {e}")
         return None
@@ -310,9 +308,7 @@ def capture_app_windows():
             # monitors[0] — объединённая область всех мониторов (для одного экрана подходит)
             full_img = sct.grab(sct.monitors[0])
             img_array = np.frombuffer(full_img.bgra, dtype=np.uint8).reshape(full_img.height, full_img.width, 4)
-            full_np = img_array[:, :, :3].copy()
-            # full_np = np.array(full_img)
-            # full_np = cv2.cvtColor(full_np, cv2.COLOR_RGB2BGR)
+            full_np = img_array[:, :, :3].copy()  # отбрасываем альфа-канал
             screen_h, screen_w = full_np.shape[:2]
 
             windows_data = []
@@ -374,84 +370,117 @@ def capture_app_windows():
         traceback.print_exc()
         return []
 
-# ========== Поток трансляции ==========
+# ========== Поток трансляции (теперь только обновляет last_frames) ==========
 
 def broadcast_frames(stop_event):
     """
-    Основной поток: с частотой CAPTURE_INTERVAL захватывает окна,
-    кодирует их в JPEG и рассылает по очередям активных клиентов.
+    Основной поток: захватывает окна, кодирует в JPEG и сохраняет в глобальном массиве last_frames.
     """
-    print("Запуск потока трансляции окон...")
+    print("Запуск потока трансляции окон (broadcast)...")
     last_cleanup = time.time()
     last_capture_time = 0
+    last_successful_capture = time.time()
 
     while not stop_event.is_set():
         try:
             now = time.time()
             if now - last_capture_time >= CAPTURE_INTERVAL:
                 windows = capture_app_windows()
-                # Кодируем захваченные окна в JPEG
+                # Кодируем в JPEG и сохраняем в last_frames
                 jpeg_frames = []
-                for win in windows:
+                if windows:  # если захватили хотя бы одно окно
+                    last_successful_capture = now
+                    
+                if now - last_successful_capture > CAPTURE_INTERVAL * 10:
+                    print("WARNING: broadcast thread seems stuck, restarting capture...")
+                    # можно попытаться перезапустить подсистему (например, пересоздать Xvfb), но для простоты просто сбросим флаг размещения окон
+                    capture_app_windows._windows_placed = False  # заставит переразместить окна при следующем захвате
+                    last_successful_capture = now
+
+                for win in windows[:MAX_WINDOWS]:
                     ret, buf = cv2.imencode('.jpg', win['image'], [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
                     if ret:
-                        jpeg_frames.append({
-                            'window_id': win['id'],
-                            'jpeg_bytes': buf.tobytes()
-                        })
+                        jpeg_frames.append(buf.tobytes())
+                        
+                    else:
+                        jpeg_frames.append(None)
+                
+                # Обновляем глобальный массив с блокировкой
+                with last_frames_lock:
+                    for i, jpeg in enumerate(jpeg_frames):
+                        if jpeg is not None:
+                            last_frames[i] = jpeg
+                        # Если окно не захватилось, оставляем предыдущий кадр
+                
                 last_capture_time = now
 
-                # Рассылаем JPEG по очередям клиентов
-                with clients_lock:
-                    current_time = time.time()
-                    for client_id in list(client_last_activity.keys()):
-                        if current_time - client_last_activity[client_id] > CLIENT_TIMEOUT:
-                            continue
-                        for i, jpeg in enumerate(jpeg_frames):
-                            if i >= MAX_WINDOWS:
-                                break
-                            q = client_queues_individual[client_id][i]
-                            if q.full():
-                                try:
-                                    q.get_nowait()  # освобождаем место
-                                except queue.Empty:
-                                    pass
-                            try:
-                                q.put_nowait(jpeg['jpeg_bytes'])
-                            except queue.Full:
-                                pass
-
-            # Очистка неактивных клиентов
+            # Очистка неактивных клиентов (только статистика)
             if time.time() - last_cleanup > CLEANUP_INTERVAL:
                 removed = cleanup_inactive_clients()
                 if removed > 0:
                     print(f"Очистка: удалено {removed} неактивных пользователей")
                 last_cleanup = time.time()
 
-            # Небольшая задержка для снижения нагрузки на CPU
+            # Небольшая задержка для снижения нагрузки
             time.sleep(0.001)
 
         except Exception as e:
             print(f"Ошибка в broadcast_frames: {e}")
+            traceback.print_exc()
             time.sleep(0.1)
 
-# ========== Генератор MJPEG для клиента ==========
+# ========== Генератор MJPEG для клиента (без очередей) ==========
 
 def generate_window_for_client(client_id, window_idx):
-    """Генератор кадров для конкретного окна конкретного клиента (MJPEG)."""
+    """
+    Генератор MJPEG для конкретного окна.
+    Отдаёт последний сохранённый кадр из глобального массива last_frames.
+    """
+    # Начальная активность уже установлена в get_or_create_client_id() при вызове маршрута
+    last_activity_update = time.time()
+    
+    # Проверяем корректность индекса
+    if window_idx < 0 or window_idx >= MAX_WINDOWS:
+        yield (b'--frame\r\n'
+               b'Content-Type: text/plain\r\n\r\n'
+               b'Invalid window index\r\n')
+        return
+
     while True:
-        try:
-            if window_idx in client_queues_individual[client_id]:
-                frame_bytes = client_queues_individual[client_id][window_idx].get(timeout=1.0)
+        now = time.time()
+        # Обновляем активность каждые 5 секунд
+        if now - last_activity_update > 5:
+            with clients_lock:
+                client_last_activity[client_id] = now
+            last_activity_update = now
+
+        # Получаем последний кадр для этого окна
+        with last_frames_lock:
+            frame_bytes = last_frames[window_idx]
+        
+        if frame_bytes is None:
+            # Если кадра ещё нет, отправляем чёрный кадр с текстом
+            dummy = np.zeros((480, 640, 3), dtype=np.uint8)
+            cv2.putText(dummy, "No frame", (50, 240),
+                        cv2.FONT_HERSHEY_SIMPLEX, 2, (255, 255, 255), 3)
+            ret, buf = cv2.imencode('.jpg', dummy, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
+            if ret:
+                frame_bytes = buf.tobytes()
+            else:
+                # Если и это не удалось, отправляем минимальный заголовок
                 yield (b'--frame\r\n'
-                       b'Content-Type: image/jpeg\r\n\r\n' + 
-                       frame_bytes + b'\r\n')
-        except queue.Empty:
-            # continue
-            break
-        except Exception as e:
-            print(f"Ошибка в generate_window_for_client для {client_id}, окно {window_idx}: {e}")
-            break
+                       b'Content-Type: image/jpeg\r\n\r\n'
+                       b'\r\n')
+                time.sleep(CAPTURE_INTERVAL)
+                continue
+
+        # Отправляем кадр
+        yield (b'--frame\r\n'
+               b'Content-Type: image/jpeg\r\n\r\n' + 
+               frame_bytes + b'\r\n')
+        
+        # Ждём примерно интервал захвата, чтобы не перегружать сеть
+        time.sleep(CAPTURE_INTERVAL)
 
 # ========== Blueprint и маршруты Flask ==========
 
@@ -478,19 +507,24 @@ def index():
 
 @visual_bp.route('/screenshot_window/<int:window_idx>')
 def screenshot_window(window_idx):
+    """
+    Возвращает последний захваченный кадр указанного окна как JPEG.
+    """
     client_id = get_or_create_client_id()
-    try:
-        if window_idx in client_queues_individual[client_id]:
-            frame_bytes = client_queues_individual[client_id][window_idx].get()
-            response = make_response(frame_bytes)
-            response.headers.set('Content-Type', 'image/jpeg')
-            response.headers.set('Content-Disposition',
-                               f'attachment; filename=screenshot_window_{window_idx}_{int(time.time())}.jpg')
-            return response
-        else:
-            return "Window not found", 404
-    except:
-        return "No data available", 404
+    if window_idx < 0 or window_idx >= MAX_WINDOWS:
+        return "Invalid window index", 404
+    
+    with last_frames_lock:
+        frame_bytes = last_frames[window_idx]
+    
+    if frame_bytes is None:
+        return "No frame available", 404
+    
+    response = make_response(frame_bytes)
+    response.headers.set('Content-Type', 'image/jpeg')
+    response.headers.set('Content-Disposition',
+                         f'attachment; filename=screenshot_window_{window_idx}_{int(time.time())}.jpg')
+    return response
 
 @visual_bp.route('/video_feed_window/<int:window_idx>')
 def video_feed_window(window_idx):
@@ -660,60 +694,56 @@ def launch_applications():
 
 
 def cleanup_processes():
-    print("Completion of processes...")
+    print("Завершение процессов...")
     global broadcast_thread, stop_broadcast
 
     if stop_broadcast:
         stop_broadcast.set()
     if broadcast_thread and broadcast_thread.is_alive():
-        broadcast_thread.join(timeout=3)
-        if broadcast_thread.is_alive():
-            print("Warning: broadcast thread did not stop within timeout.")
-        else:
-            print("Broadcast thread stopped.")
+        try:
+            broadcast_thread.join(timeout=3)
+        except RuntimeError as e:
+            # Игнорируем ошибки eventlet при завершении
+            print(f"⚠️ Поток трансляции завершён с предупреждением: {e}")
+        except Exception as e:
+            print(f"⚠️ Неожиданная ошибка при ожидании потока: {e}")
+        finally:
+            if broadcast_thread.is_alive():
+                print("⚠️ Поток трансляции не завершился, продолжаем очистку...")
 
+    # Завершение дочерних процессов
     for process in app_processes:
         try:
             if process.poll() is None:
-                print(f"  Application completion PID: {process.pid}")
+                print(f"  Завершение приложения PID: {process.pid}")
                 process.terminate()
                 try:
                     process.wait(timeout=8)
                 except subprocess.TimeoutExpired:
                     process.kill()
         except Exception as e:
-            print(f"  Application completion error: {e}")
+            print(f"  Ошибка завершения приложения: {e}")
     
     try:
         if xvfb_process and xvfb_process.poll() is None:
-            print("  Completion Xvfb...")
+            print("  Завершение Xvfb...")
             xvfb_process.terminate()
             try:
                 xvfb_process.wait(timeout=8)
             except subprocess.TimeoutExpired:
                 xvfb_process.kill()
     except Exception as e:
-        print(f"  Completion error Xvfb: {e}")
+        print(f"  Ошибка завершения Xvfb: {e}")
     
     os.environ['DISPLAY'] = original_display
-    print("All processes are complete")
-
-
-def signal_handler(signum, frame):
-    print("\nЗавершение работы...")
-    cleanup_processes()
-    os._exit(0)
-
-signal.signal(signal.SIGINT, signal_handler)
-signal.signal(signal.SIGTERM, signal_handler)
+    print("Все процессы завершены")
 
 def start_threads():
-    """Запускает поток трансляции."""
     global broadcast_thread, stop_broadcast
     stop_broadcast = threading.Event()
     broadcast_thread = threading.Thread(target=broadcast_frames, args=(stop_broadcast,), daemon=True)
     broadcast_thread.start()
-    print("Поток трансляции запущен.")
+    print("Поток трансляции запущен (демонический).")
 
 # ========== Инициализация Xvfb и запуск ==========
 
@@ -728,7 +758,7 @@ xvfb_process = subprocess.Popen(
 )
 time.sleep(2)
 os.environ['DISPLAY'] = ':99'
-subprocess.run(["xhost", "+"], capture_output=True)
+subprocess.run(["xhost", "+"], capture_output=True, timeout=1)
 print(f"Виртуальный дисплей запущен: {os.environ['DISPLAY']}")
 
 # ========== Функция регистрации blueprint'а ==========
@@ -736,7 +766,7 @@ print(f"Виртуальный дисплей запущен: {os.environ['DISPL
 def init_visual(app):
     app.register_blueprint(visual_bp)
     print("=" * 60)
-    print("  Многопользовательская трансляция окон (оптимизированная с MSS)")
+    print("  Многопользовательская трансляция окон")
     print("=" * 60)
     print("\nНастройки:")
     print(f"  Таймаут клиента: {CLIENT_TIMEOUT} сек")

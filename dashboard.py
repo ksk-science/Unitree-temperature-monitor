@@ -1,16 +1,18 @@
+import signal
 import sys
 import time
 import os
 import secrets
 import logging
 import argparse
+import threading
 from threading import Lock
 from flask import Flask, render_template, jsonify, send_from_directory
 from flask_socketio import SocketIO
 
 os.environ['ENVIRONMENT'] = 'prod'
 
-from visual import init_visual
+from visual import init_visual, cleanup_processes
 
 from unitree_sdk2py.core.channel import ChannelSubscriber, ChannelFactoryInitialize
 
@@ -28,9 +30,50 @@ app = Flask(__name__)
 # Use environment variable for secret key, fallback to random key for security
 app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY', secrets.token_hex(16))
 app.config['TEMPLATES_AUTO_RELOAD'] = True
-socketio = SocketIO(app, cors_allowed_origins="*", logger=False, engineio_logger=False)
+socketio = SocketIO(app, cors_allowed_origins="*", logger=False, engineio_logger=False, async_mode='threading')
 
 init_visual(app)
+
+
+shutdown_requested = False
+cleanup_done = False
+cleanup_lock = threading.Lock()
+
+def force_exit_after_delay(delay=10):
+    """Принудительная очистка и выход через delay секунд."""
+    time.sleep(delay)
+    with cleanup_lock:
+        global cleanup_done
+        if not cleanup_done:
+            print(f"\n⏱️ Таймаут {delay} сек истёк, выполняю принудительную очистку...")
+            cleanup_processes()
+            cleanup_done = True
+            print("💀 Принудительное завершение.")
+            os._exit(1)
+
+def signal_handler(sig, frame):
+    global shutdown_requested
+    if not shutdown_requested:
+        shutdown_requested = True
+        print("\n⏳ Получен сигнал завершения, завершаю работу...")
+        
+        # Запасной таймер на случай зависания (уменьшен до 5 секунд)
+        killer = threading.Thread(target=force_exit_after_delay, args=(5,), daemon=True)
+        killer.start()
+        
+        # Завершаем основной поток, вызывая SystemExit -> выполнится finally
+        sys.exit(0)
+    else:
+        print("\n💥 Принудительное завершение (повторный Ctrl+C)")
+        with cleanup_lock:
+            global cleanup_done
+            if not cleanup_done:
+                cleanup_processes()
+                cleanup_done = True
+        os._exit(1)
+
+signal.signal(signal.SIGINT, signal_handler)
+signal.signal(signal.SIGTERM, signal_handler)
 
 # Configure logging to suppress routine werkzeug messages
 log = logging.getLogger('werkzeug')
@@ -252,7 +295,19 @@ def serve_js(filename):
 
 def run_flask_app():
     """Run the Flask application."""
-    socketio.run(app, host=DEFAULT_HOST, port=DEFAULT_PORT, debug=False)
+
+    global cleanup_done
+    try:
+        socketio.run(app, host=DEFAULT_HOST, port=DEFAULT_PORT, debug=False)
+    finally:
+        with cleanup_lock:
+            if not cleanup_done:
+                print("🛑 Сервер остановлен, выполняю очистку...")
+                cleanup_processes()
+                cleanup_done = True
+            else:
+                print("🛑 Сервер остановлен, очистка уже выполнена.")
+        print("✅ Выход.")
 
 
 def main():

@@ -4,25 +4,67 @@ Test script for the 3D dashboard with simulated motor data.
 This allows testing the visualization without a real robot connection.
 """
 
+import signal
 import sys
 import time
 import random
 import os
 import secrets
+import threading
 from threading import Thread
 from flask import Flask, render_template, jsonify, send_from_directory
 from flask_socketio import SocketIO
 
 from config_g1 import MOTOR_NAMES, MOTOR_TO_MESH, URDF_FILENAME, URDF_PATH, DEFAULT_PORT, DEFAULT_HOST
 
-from visual import init_visual
+from visual import init_visual, cleanup_processes
 
 app = Flask(__name__)
 # Use environment variable for secret key, fallback to random key for security
 app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY', secrets.token_hex(16))
-socketio = SocketIO(app, cors_allowed_origins="*")
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 
 init_visual(app)
+
+shutdown_requested = False
+cleanup_done = False
+cleanup_lock = threading.Lock()
+
+def force_exit_after_delay(delay=10):
+    """Принудительная очистка и выход через delay секунд."""
+    time.sleep(delay)
+    with cleanup_lock:
+        global cleanup_done
+        if not cleanup_done:
+            print(f"\n⏱️ Таймаут {delay} сек истёк, выполняю принудительную очистку...")
+            cleanup_processes()
+            cleanup_done = True
+            print("💀 Принудительное завершение.")
+            os._exit(1)
+
+def signal_handler(sig, frame):
+    global shutdown_requested
+    if not shutdown_requested:
+        shutdown_requested = True
+        print("\n⏳ Получен сигнал завершения, завершаю работу...")
+        
+        # Запасной таймер на случай зависания (уменьшен до 5 секунд)
+        killer = threading.Thread(target=force_exit_after_delay, args=(5,), daemon=True)
+        killer.start()
+        
+        # Завершаем основной поток, вызывая SystemExit -> выполнится finally
+        sys.exit(0)
+    else:
+        print("\n💥 Принудительное завершение (повторный Ctrl+C)")
+        with cleanup_lock:
+            global cleanup_done
+            if not cleanup_done:
+                cleanup_processes()
+                cleanup_done = True
+        os._exit(1)
+
+signal.signal(signal.SIGINT, signal_handler)
+signal.signal(signal.SIGTERM, signal_handler)
 
 # Motor mappings imported from config.py
 motor_data = {'temperatures': [], 'timestamp': 0}
@@ -108,4 +150,14 @@ if __name__ == "__main__":
     motor_data = generate_simulated_data()
     
     # Run Flask app
-    socketio.run(app, host=DEFAULT_HOST, port=DEFAULT_PORT, debug=False)
+    try:
+        socketio.run(app, host=DEFAULT_HOST, port=DEFAULT_PORT, debug=False)
+    finally:
+        with cleanup_lock:
+            if not cleanup_done:
+                print("🛑 Сервер остановлен, выполняю очистку...")
+                cleanup_processes()
+                cleanup_done = True
+            else:
+                print("🛑 Сервер остановлен, очистка уже выполнена.")
+        print("✅ Выход.")
