@@ -8,6 +8,8 @@ from threading import Lock
 from flask import Flask, render_template, jsonify, send_from_directory
 from flask_socketio import SocketIO
 
+os.environ['ENVIRONMENT'] = 'prod'
+
 from visual import init_visual
 
 from unitree_sdk2py.core.channel import ChannelSubscriber, ChannelFactoryInitialize

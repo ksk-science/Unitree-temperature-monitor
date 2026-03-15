@@ -34,7 +34,7 @@ from mss import mss
 CAPTURE_INTERVAL = 0.033           # 30 кадров в секунду
 WINDOW_INFO_CACHE_TIME = 2.0        # обновлять список окон раз в 2 секунды
 WINDOW_GEOMETRY_CACHE_TIME = 1.0    # обновлять геометрию окон раз в 1 секунду
-CLIENT_TIMEOUT = 10                  # таймаут неактивного клиента (сек)
+CLIENT_TIMEOUT = 11                  # таймаут неактивного клиента (сек)
 CLEANUP_INTERVAL = 5                 # интервал очистки неактивных клиентов (сек)
 MAX_WINDOWS = 10                      # максимум отслеживаемых окон
 JPEG_QUALITY = 85                     # качество JPEG (0-100)
@@ -447,7 +447,8 @@ def generate_window_for_client(client_id, window_idx):
                        b'Content-Type: image/jpeg\r\n\r\n' + 
                        frame_bytes + b'\r\n')
         except queue.Empty:
-            continue
+            # continue
+            break
         except Exception as e:
             print(f"Ошибка в generate_window_for_client для {client_id}, окно {window_idx}: {e}")
             break
