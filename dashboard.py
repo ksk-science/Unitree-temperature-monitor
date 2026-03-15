@@ -8,6 +8,8 @@ from threading import Lock
 from flask import Flask, render_template, jsonify, send_from_directory
 from flask_socketio import SocketIO
 
+from visual import init_visual
+
 from unitree_sdk2py.core.channel import ChannelSubscriber, ChannelFactoryInitialize
 
 # Robot type will be set at runtime
@@ -25,6 +27,8 @@ app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY', secrets.token_hex(16))
 app.config['TEMPLATES_AUTO_RELOAD'] = True
 socketio = SocketIO(app, cors_allowed_origins="*", logger=False, engineio_logger=False)
+
+init_visual(app)
 
 # Configure logging to suppress routine werkzeug messages
 log = logging.getLogger('werkzeug')
